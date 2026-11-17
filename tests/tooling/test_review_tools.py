@@ -70,6 +70,29 @@ def repo(tmp_path):
     return make_repo(tmp_path / 'repo')
 
 
+def test_git_isolation_hides_inherited_configuration_from_code_under_test(tmp_path, repo, monkeypatch, isolate_git):
+    """Inherited ~/.gitconfig, global config and GIT_* overrides cannot reach git calls made by the review tools."""
+    home = tmp_path / 'home'
+    home.mkdir()
+    (home / '.gitconfig').write_text('[audit]\n    home = inherited\n', encoding='utf-8')
+    monkeypatch.setenv('HOME', str(home))
+    monkeypatch.delenv('XDG_CONFIG_HOME', raising=False)
+    monkeypatch.delenv('GIT_CONFIG_GLOBAL', raising=False)
+    # Precondition: without isolation, the home configuration is visible to git.
+    assert worktree_gates._git(repo, 'config', '--get', 'audit.home') == 'inherited\n'
+    config = tmp_path / 'inherited.gitconfig'
+    config.write_text('[audit]\n    marker = inherited\n', encoding='utf-8')
+    monkeypatch.setenv('GIT_CONFIG_GLOBAL', str(config))
+    monkeypatch.setenv('GIT_CONFIG_PARAMETERS', "'audit.parameter=inherited'")
+    # Precondition: without isolation, the inherited settings are visible to git.
+    assert worktree_gates._git(repo, 'config', '--get', 'audit.marker') == 'inherited\n'
+    assert worktree_gates._git(repo, 'config', '--get', 'audit.parameter') == 'inherited\n'
+    isolate_git(monkeypatch, tmp_path)
+    for key in ('audit.home', 'audit.marker', 'audit.parameter'):
+        with pytest.raises(subprocess.CalledProcessError):
+            worktree_gates._git(repo, 'config', '--get', key)
+
+
 CALC = 'media_transcriber/calc.py'
 TESTS = ['tests/test_calc.py']
 

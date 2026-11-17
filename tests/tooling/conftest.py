@@ -56,6 +56,35 @@ class ShellScriptRunner:
         )
 
 
+def apply_git_isolation(monkeypatch, root):
+    """Hide inherited Git configuration from this process and every git child it starts.
+
+    Removes every inherited ``GIT_*`` variable, such as ``GIT_DIR`` or ``GIT_CONFIG_PARAMETERS``, ignores the
+    system configuration, and points the global configuration at an absent file under ``root``. The user's
+    ``~/.gitconfig``, mounted in the dev container, can then set no signing, hooks or other behavior.
+
+    Args:
+        monkeypatch: The test's monkeypatch, which restores the environment afterwards.
+        root: A test-owned directory for the absent global configuration path.
+    """
+    for name in [name for name in os.environ if name.startswith('GIT_')]:
+        monkeypatch.delenv(name)
+    monkeypatch.setenv('GIT_CONFIG_NOSYSTEM', '1')
+    monkeypatch.setenv('GIT_CONFIG_GLOBAL', str(root / 'absent-global-config'))
+
+
+@pytest.fixture
+def isolate_git():
+    """Provide the Git isolation step, for tests that check it."""
+    return apply_git_isolation
+
+
+@pytest.fixture(autouse=True)
+def isolated_git(monkeypatch, tmp_path):
+    """Run every tooling test, and the code under test, without inherited Git configuration."""
+    apply_git_isolation(monkeypatch, tmp_path)
+
+
 @pytest.fixture
 def run_shell_script(tmp_path):
     """Provide a runner whose working, home and temporary directories all live under ``tmp_path``."""
