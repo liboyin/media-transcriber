@@ -1,0 +1,44 @@
+{
+    // Development-only storage: no host data is mounted (DESIGN section 9).
+    "name": "media-transcriber",
+    "dockerComposeFile": [
+        // builds the app service from the Dockerfile's dev target with development-only volumes
+        "docker-compose.devcontainer.yaml"
+    ],
+    "service": "app",
+    "features": {
+        // base image doesn't have sudo
+        "ghcr.io/devcontainers/features/common-utils:2": {
+            "configureZshAsDefaultShell": true
+        }
+    },
+    "overrideCommand": true,
+    "postCreateCommand": "chmod +x .devcontainer/postCreateCommand.sh && ./.devcontainer/postCreateCommand.sh",
+    "remoteUser": "ubuntu",
+    "workspaceFolder": "/workspaces/media-transcriber",
+    "mounts": [
+        // share Git config between host and container; SSH authentication uses the agent VS Code
+        // forwards, so no key files are mounted
+        "source=${localEnv:HOME}/.gitconfig,target=/home/ubuntu/.gitconfig,type=bind,readonly",
+        // overlay the image's project directory with the whole workspace, including files the
+        // build context excludes
+        "source=${localWorkspaceFolder},target=/workspaces/media-transcriber,type=bind"
+    ],
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "anthropic.claude-code",
+                "charliermarsh.ruff",
+                "mhutchie.git-graph",
+                "ms-python.debugpy",
+                "ms-python.python",
+                "ms-python.vscode-pylance",
+                "openai.chatgpt",
+                "ryu1kn.partial-diff",
+                "streetsidesoftware.code-spell-checker",
+                "tamasfe.even-better-toml",
+                "yzhang.markdown-all-in-one"
+            ]
+        }
+    }
+}
