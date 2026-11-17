@@ -12,6 +12,7 @@ authors = [
 ]
 dependencies = [
   "numpy>=2.5.5",
+  "pathlib-extensions",
 ]
 
 [dependency-groups]
@@ -34,6 +35,12 @@ warn_unused_ignores = true
 # Missing imports are errors, so a misspelt module or a missing stub fails the gate. Packages that
 # ship no type information get a narrow override when the application first imports them; adding
 # one earlier makes warn_unused_configs report an unused section on every run.
+
+[[tool.mypy.overrides]]
+# pathlib-extensions ships no py.typed marker, so its annotations are invisible to mypy. Only the
+# staging layer imports it, and its tests exercise StagedFile and OverwritePolicy directly.
+module = "pathlib_extensions"
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -61,3 +68,6 @@ select = ["E", "W", "F", "I", "B", "UP", "D"]
 [tool.ruff.lint.pydocstyle]
 # AGENTS.md requires Google-style docstrings.
 convention = "google"
+
+[tool.uv.sources]
+pathlib-extensions = { git = "https://github.com/liboyin/pathlib-extensions.git" }
