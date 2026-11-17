@@ -52,7 +52,7 @@ FROM base AS build
 ARG APT_PROXY
 ARG PYPI_PROXY
 
-# git fetches git dependencies, such as pathlib-extensions once the staging task adds it, and
+# git fetches git dependencies, such as pathlib-extensions, and
 # the review tools and their tests run it in the dev container. It and uv are build and
 # development tools, so the future runtime stage leaves them out.
 RUN --mount=type=bind,from=build_common,target=/build-common \
