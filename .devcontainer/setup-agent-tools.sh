@@ -12,8 +12,15 @@ if [[ -e "$link" || -L "$link" ]]; then
         exit 1
     fi
 fi
+# SSH, so the checkout can push. It authenticates through the agent that VS Code forwards, and
+# postCreateCommand.sh has already recorded GitHub's host keys.
+origin=git@github.com:liboyin/agent-workflow-common.git
 if [[ ! -e "$checkout" && ! -L "$checkout" ]]; then
-    git clone https://github.com/liboyin/agent-workflow-common.git "$checkout"
+    git clone "$origin" "$checkout" || {
+        status=$?
+        echo "setup-agent-tools: cloning $origin failed; load your GitHub SSH key into the agent on the host (ssh-add), then rebuild the container" >&2
+        exit "$status"
+    }
 fi
 # Reuse a valid checkout, including local edits. Do not pull, reset or remove it.
 if [[ ! -e "$checkout/.git" ]] || ! git -C "$checkout" rev-parse --is-inside-work-tree > /dev/null; then

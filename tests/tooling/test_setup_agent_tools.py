@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 DEVCONTAINER = Path(__file__).resolve().parents[2] / '.devcontainer'
-ORIGIN = 'https://github.com/liboyin/agent-workflow-common.git'
+ORIGIN = 'git@github.com:liboyin/agent-workflow-common.git'
 
 
 def git(root, *args):
@@ -132,6 +132,7 @@ def test_failed_clone_propagates_failure_without_publishing_a_link(setup):
     _, checkout, link, _, _, _ = setup
     result = run_setup(setup, status=42)
     assert result.returncode == 42
+    assert 'load your GitHub SSH key into the agent on the host' in result.stderr
     assert not checkout.exists()
     assert not link.exists() and not link.is_symlink()
 

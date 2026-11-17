@@ -163,7 +163,7 @@ Three tools run from the sibling checkout `../agent-workflow-common`. This repos
 
 - The devcontainer runs `.devcontainer/postCreateCommand.sh`, which clones the tools into `$HOME/persist/agent-workflow-common` on the existing `dev_persist` volume.
 - The hook changes only `/workspaces` ownership to `ubuntu:ubuntu` with `sudo chown`, then links the checkout at `/workspaces/agent-workflow-common`.
-- First setup needs GitHub access. Existing checkouts are reused without pulls or resets, so local work survives recreation of the container.
+- First setup clones over SSH, so the user's GitHub key must be loaded in the SSH agent on the host, which VS Code forwards. Existing checkouts are reused without pulls or resets, so local work survives recreation of the container.
 - Setup stops if the sibling path conflicts, the checkout is invalid, required tools are missing, or cloning fails. It preserves existing paths.
 - Resolve a reported conflict explicitly. The hook never replaces another checkout or removes an incomplete one.
 - This checkout is separate from the checkouts of `youtube-collector` and ClipboardTTS. Commit and push shared changes to transfer them between environments.
