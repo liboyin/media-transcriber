@@ -1,0 +1,13 @@
+{
+  "check_docs": {
+    "changed_lines_only": [
+      "DESIGN.md",
+      "project-reviews.md",
+      "tasks/open/",
+      "tasks/closed/"
+    ]
+  },
+  "dispatch": {
+    "safety": "Never load a real model, use an accelerator, read the video library or the model weights, touch the staging share, or read .env."
+  }
+}
