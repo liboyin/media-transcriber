@@ -10,7 +10,7 @@ This file holds the recommended order, the constraints that several tasks share,
 
 The tasks below were recorded with the governance scaffold, [T1](closed/T1.md). They are compact until accepted, and each is bounded against DESIGN when it starts.
 
-1. T6, T4 and T5, in any order: the staging layer and the two engine adapters. [T3](closed/T3.md), the pipeline they build on, is closed.
+1. T4 and T5, in any order: the two engine adapters. [T3](closed/T3.md), the pipeline, and [T6](closed/T6.md), the staging layer, are closed.
 2. T7, then T8: the store and worker, then the HTTP API and the service entry point.
 3. T9: the benchmark, after at least one adapter.
 
@@ -29,7 +29,6 @@ A host check needs a Docker daemon, a real accelerator or real host data, and ru
 - [T2](open/T2.md) — Low. Host checks.
 - [T4](open/T4.md) — High. faster-whisper adapter.
 - [T5](open/T5.md) — High. MLX Whisper adapter.
-- [T6](open/T6.md) — High. Staging layer.
 - [T7](open/T7.md) — High. Store and worker.
 - [T8](open/T8.md) — High. HTTP API and service entry point.
 - [T9](open/T9.md) — Medium. Benchmark command and result sets.
