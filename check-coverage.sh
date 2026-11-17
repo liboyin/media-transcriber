@@ -1,0 +1,141 @@
+#! /bin/bash
+# Run the test suite and enforce the coverage policy that AGENTS.md delegates to this script:
+# statement and branch coverage must each reach the threshold for every measured file and for the
+# project as a whole. coverage.py reports line coverage as statement coverage, so the two are one
+# check here. pytest's own --cov-fail-under only guards the project total, which is why per-file
+# enforcement lives here instead of in pyproject.toml.
+#
+# Usage: ./check-coverage.sh [pytest options...]
+# Extra arguments are forwarded to pytest. Selecting a subset of tests makes the per-file gate
+# meaningless, so pass options (e.g. -x, -q), not test paths.
+#
+# Environment:
+#   COVERAGE_THRESHOLD  Minimum percentage per file and for the total, from 0 to 100 inclusive.
+#                       Defaults to 80 when unset or empty; an invalid value fails before pytest runs.
+#
+# Run from the repository root: the gate also refuses to run unless python3 matches the version
+# that .python-version pins and media_transcriber resolves to this tree's package.
+set -uo pipefail
+
+threshold="${COVERAGE_THRESHOLD:-80}"
+# Reject an unusable threshold before running the suite: NaN compares false against every
+# percentage, and an out-of-range value makes the per-file comparisons pass or fail vacuously.
+python3 - "$threshold" <<'PY' || exit 1
+"""Exit with a message unless the threshold is a number in [0, 100]."""
+import sys
+
+raw_threshold = sys.argv[1]
+try:
+    threshold = float(raw_threshold)
+except ValueError:
+    threshold = float('nan')
+# The chained comparison is false for NaN and both infinities, so it also enforces finiteness.
+if not 0 <= threshold <= 100:
+    sys.exit(f"check-coverage: COVERAGE_THRESHOLD must be a number from 0 to 100, got {raw_threshold!r}")
+PY
+
+# Run the suite only on the interpreter the repository pins. A dev container built before a
+# Python upgrade keeps its old venv, and the suite would pass there on the wrong interpreter, so
+# the gate refuses instead. .python-version is read from the working directory, which is the
+# repository root when the gate runs; python3 is the PATH interpreter, which in the dev container
+# is the venv that also provides pytest. A pin such as 3.14 accepts any 3.14.x; a full version
+# such as 3.14.4 must match exactly.
+python3 - <<'PY' || exit 1
+"""Exit with a message unless python3 matches the .python-version pin in the working directory."""
+import platform
+import sys
+from pathlib import Path
+
+try:
+    lines = Path('.python-version').read_text(encoding='utf-8').splitlines()
+except OSError as error:
+    sys.exit(f"check-coverage: cannot read .python-version ({error.strerror}); run the gate from the repository root")
+pins = [line.strip() for line in lines if line.strip() and not line.lstrip().startswith('#')]
+if not pins:
+    sys.exit("check-coverage: .python-version names no Python version")
+pin, actual = pins[0], platform.python_version()
+if actual != pin and not actual.startswith(f'{pin}.'):
+    sys.exit(f"check-coverage: python3 is Python {actual}, but .python-version pins {pin}; "
+             "rebuild the dev container so its venv uses the pinned interpreter")
+PY
+
+# Measure only the package in this tree. pytest does not put the working directory on sys.path, so
+# in a separate git worktree the dev container's editable install would supply the main tree's
+# package, and the gate would pass on the wrong files. -P gives this check that same sys.path:
+# without it, python3 reading its program from stdin would look in the working directory first.
+python3 -P - <<'PY' || exit 1
+"""Exit with a message unless media_transcriber resolves to the working directory's package."""
+import importlib.util
+import sys
+from pathlib import Path
+
+spec = importlib.util.find_spec('media_transcriber')
+origin = None if spec is None else spec.origin
+expected = (Path.cwd() / 'media_transcriber').resolve()
+actual = None if origin is None else Path(origin).resolve().parent
+if actual != expected:
+    sys.exit(f"check-coverage: media_transcriber resolves to {actual}, not {expected}; "
+             "set PYTHONPATH to this tree's root so the gate measures this tree")
+PY
+
+report="$(mktemp -t coverage-XXXXXXXX.json)"
+trap 'rm -f "$report"' EXIT
+
+pytest --cov-report="json:$report" "$@"
+pytest_status=$?
+if [ ! -s "$report" ]; then
+    echo "check-coverage: pytest produced no coverage report (exit ${pytest_status})" >&2
+    exit 1
+fi
+
+python3 - "$report" "$threshold" <<'PY'
+"""Report every measured file whose statement or branch coverage is below the threshold."""
+import json
+import sys
+
+report_path, raw_threshold = sys.argv[1], sys.argv[2]
+threshold = float(raw_threshold)
+with open(report_path, encoding='utf-8') as handle:
+    report = json.load(handle)
+
+
+def percentages(summary):
+    """Return (statement %, branch %) for a coverage summary, with None where nothing is measured."""
+    statements = summary['num_statements']
+    branches = summary['num_branches']
+    statement_percent = None if statements == 0 else 100.0 * summary['covered_lines'] / statements
+    branch_percent = None if branches == 0 else 100.0 * summary['covered_branches'] / branches
+    return statement_percent, branch_percent
+
+
+failures = []
+for path, data in sorted(report['files'].items()):
+    statement_percent, branch_percent = percentages(data['summary'])
+    if statement_percent is None:  # An empty module such as __init__.py measures nothing.
+        continue
+    if statement_percent < threshold or (branch_percent is not None and branch_percent < threshold):
+        failures.append((path, statement_percent, branch_percent))
+
+total_statement, total_branch = percentages(report['totals'])
+if total_statement is not None and total_statement < threshold:
+    failures.append(('TOTAL', total_statement, total_branch))
+elif total_branch is not None and total_branch < threshold:
+    failures.append(('TOTAL', total_statement, total_branch))
+
+if failures:
+    print(f"\nCoverage below {threshold:g}% (statement/branch):", file=sys.stderr)
+    for path, statement_percent, branch_percent in failures:
+        branch_text = 'n/a' if branch_percent is None else f'{branch_percent:.1f}%'
+        print(f"  {path}: {statement_percent:.1f}% / {branch_text}", file=sys.stderr)
+    sys.exit(1)
+
+total_branch_text = 'n/a' if total_branch is None else f'{total_branch:.1f}%'
+print(f"\nCoverage gate passed: every file and the total reach {threshold:g}% "
+      f"(total {total_statement:.1f}% statement / {total_branch_text} branch).")
+PY
+coverage_status=$?
+
+if [ "$pytest_status" -ne 0 ]; then
+    exit "$pytest_status"
+fi
+exit "$coverage_status"
