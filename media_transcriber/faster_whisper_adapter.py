@@ -12,7 +12,7 @@ from faster_whisper import WhisperModel
 from faster_whisper.transcribe import Segment as LibrarySegment
 
 from media_transcriber.engine import Profile, Segment, Waveform
-from media_transcriber.weights import resolve_weights
+from media_transcriber.weights import WeightsNotFoundError, resolve_weights
 from media_transcriber.whisper_languages import WHISPER_LANGUAGES, whisper_language
 
 __all__ = ['BASELINE_PROFILE', 'ENGINE', 'FasterWhisperAdapter', 'FasterWhisperModel']
@@ -91,7 +91,8 @@ class FasterWhisperAdapter:
         Raises:
             ValueError: If the profile is for another engine, has decoding settings, or names an
                 invalid repository. CTranslate2 also raises it for an unknown precision.
-            WeightsNotFoundError: If the weights directory lacks the profile's snapshot.
+            WeightsNotFoundError: If the weights directory lacks the profile's snapshot, or the
+                snapshot lacks `tokenizer.json`.
             RuntimeError: If CTranslate2 cannot use CUDA.
         """
         if profile.engine != ENGINE:
@@ -100,6 +101,12 @@ class FasterWhisperAdapter:
             raise ValueError(f'Engine {ENGINE} accepts no decoding settings, but profile {profile.name} has '
                              f'{sorted(profile.decoding)}.')
         directory = resolve_weights(self.weights_dir, profile)
+        # faster-whisper 1.2.1 replaces a missing tokenizer.json with openai/whisper-tiny's from the
+        # Hub, and does not pass local_files_only to that lookup. Its other files fail or fall
+        # back locally.
+        if not (directory / 'tokenizer.json').is_file():
+            raise WeightsNotFoundError(f'The weights of {profile.model} at revision {profile.revision} in '
+                                       f'{directory} lack tokenizer.json. Download the complete snapshot.')
         # faster-whisper treats a name that is not an existing directory as a repository to
         # download. If the snapshot disappears before this call, local_files_only still keeps
         # the library from downloading (DESIGN section 9).

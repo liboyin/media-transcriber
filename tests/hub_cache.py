@@ -7,9 +7,10 @@ An offline lookup by commit hash needs only that snapshot directory, so tests bu
 from pathlib import Path
 
 
-def add_snapshot(weights_dir: Path, model: str, revision: str) -> Path:
-    """Create the snapshot directory of a model at a revision, with a placeholder config, and return it."""
+def add_snapshot(weights_dir: Path, model: str, revision: str, files: tuple[str, ...] = ('config.json',)) -> Path:
+    """Create the snapshot directory of a model at a revision, with placeholder files, and return it."""
     snapshot = weights_dir / f'models--{model.replace("/", "--")}' / 'snapshots' / revision
     snapshot.mkdir(parents=True)
-    (snapshot / 'config.json').write_text('{}')
+    for name in files:
+        (snapshot / name).write_text('{}')
     return snapshot

@@ -9,8 +9,9 @@ real field names.
 from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import MagicMock, create_autospec
+from unittest.mock import MagicMock, Mock, create_autospec
 
+import faster_whisper.transcribe as library
 import numpy as np
 import pytest
 from faster_whisper import WhisperModel
@@ -20,6 +21,13 @@ from hub_cache import add_snapshot
 import media_transcriber.faster_whisper_adapter as testee
 from media_transcriber.engine import Segment
 from media_transcriber.weights import WeightsNotFoundError
+
+SNAPSHOT_FILES = ('config.json', 'model.bin', 'tokenizer.json')
+
+
+def add_baseline_snapshot(weights_dir: Path) -> Path:
+    """Add a complete snapshot of the baseline profile to a test-owned weights directory, and return it."""
+    return add_snapshot(weights_dir, testee.BASELINE_PROFILE.model, testee.BASELINE_PROFILE.revision, SNAPSHOT_FILES)
 
 
 def library_segment(start: float, end: float, text: str) -> LibrarySegment:
@@ -62,7 +70,7 @@ def test_adapter_reports_whisper_languages_and_maps_tags(tmp_path: Path) -> None
 def test_load_builds_a_cuda_model_from_the_resolved_snapshot_offline(tmp_path: Path, whisper_model: MagicMock) -> None:
     """The library gets the local snapshot directory, CUDA, the profile's precision and no Hub access."""
     profile = testee.BASELINE_PROFILE
-    snapshot = add_snapshot(tmp_path, profile.model, profile.revision)
+    snapshot = add_baseline_snapshot(tmp_path)
 
     model = testee.FasterWhisperAdapter(tmp_path).load(profile)
 
@@ -85,7 +93,7 @@ def test_load_rejects_a_profile_for_another_engine_before_touching_the_weights(
 def test_load_rejects_decoding_settings(tmp_path: Path, whisper_model: MagicMock) -> None:
     """The adapter accepts no decoding settings yet, so a profile with one fails instead of being ignored."""
     profile = replace(testee.BASELINE_PROFILE, decoding={'beam_size': 1})
-    add_snapshot(tmp_path, profile.model, profile.revision)
+    add_baseline_snapshot(tmp_path)
 
     with pytest.raises(ValueError, match='beam_size'):
         testee.FasterWhisperAdapter(tmp_path).load(profile)
@@ -103,6 +111,29 @@ def test_load_fails_without_building_a_model_when_the_weights_are_missing(
     whisper_model.assert_not_called()
 
 
+def test_load_refuses_a_snapshot_without_a_tokenizer_before_the_library_could_fetch_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without tokenizer.json, faster-whisper would fetch a tokenizer from the Hub, so the load stops first.
+
+    The library's real Python constructor runs, with native model loading and the remote tokenizer
+    lookup replaced by doubles, so a removed check shows up as a recorded remote call.
+    """
+    snapshot = add_snapshot(tmp_path, testee.BASELINE_PROFILE.model, testee.BASELINE_PROFILE.revision,
+                            ('config.json', 'model.bin'))
+    native = Mock(return_value=Mock(is_multilingual=True))
+    monkeypatch.setattr(library.ctranslate2.models, 'Whisper', native)
+    remote = Mock(side_effect=RuntimeError('remote tokenizer lookup intercepted'))
+    monkeypatch.setattr(library.tokenizers.Tokenizer, 'from_pretrained', remote)
+
+    with pytest.raises(WeightsNotFoundError, match='tokenizer.json') as caught:
+        testee.FasterWhisperAdapter(tmp_path).load(testee.BASELINE_PROFILE)
+
+    assert str(snapshot) in str(caught.value)
+    remote.assert_not_called()
+    native.assert_not_called()
+
+
 def test_transcribe_passes_the_language_and_maps_segments_lazily(tmp_path: Path, whisper_model: MagicMock) -> None:
     """The library gets the waveform, the code and the task, and each segment converts only when consumed."""
     produced: list[LibrarySegment] = []
@@ -115,7 +146,7 @@ def test_transcribe_passes_the_language_and_maps_segments_lazily(tmp_path: Path,
 
     instance = whisper_model.return_value
     instance.transcribe.return_value = (library_segments(), object())
-    add_snapshot(tmp_path, testee.BASELINE_PROFILE.model, testee.BASELINE_PROFILE.revision)
+    add_baseline_snapshot(tmp_path)
     model = testee.FasterWhisperAdapter(tmp_path).load(testee.BASELINE_PROFILE)
     waveform = np.zeros(16000, dtype=np.float32)
 
