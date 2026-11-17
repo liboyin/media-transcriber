@@ -126,8 +126,9 @@ The engine adapter returns timed segments in an engine-neutral form. SRT is an e
 
 - The SRT is written beside its media, with the media's stem and the suffix `.srt`. Only an exact name match counts as an existing SRT.
 - Publication MUST be atomic, as at the source revision and in the collector. The complete text is written in a fresh hidden `.staging-<random>` directory beside the destination and published with pathlib-extensions' `StagedFile` under `NEVER`. A competing file that appears during the job is preserved, and the job ends `existing`.
+- If the media file is gone when the SRT is about to be published, the job fails with category `missing` and nothing is written (M20).
 - A failure or interruption leaves previous output intact and removes its own stage directory. A stage directory left by an abrupt exit is not scavenged.
-- SRT formatting follows the source revision's shared formatter: millisecond rounding before decomposition, hours always present, comma milliseconds, and outer whitespace stripped from text.
+- SRT formatting follows the source revision's shared formatter: millisecond rounding before decomposition, hours always present, comma milliseconds, and outer whitespace stripped from text. Consecutive segments with identical text become one cue (M19).
 - The transcriber writes only new SRT files. It never deletes, renames or replaces anything in staging.
 
 ### 5.7 Job states and outcomes
@@ -388,6 +389,13 @@ Decision on the open point that T1 recorded in T7, made by the user on 2026-11-1
 | ID | Decision |
 |---|---|
 | M18 | Refines M17 as `youtube-collector`'s T42 refines C55: during decoding and publication, the worker refreshes staging freshness only by checking the marker again between chunks. A progress report alone does not refresh it (5.11). |
+
+Decisions made by the user when T3 and T6 were bounded, on 2026-11-17:
+
+| ID | Decision |
+|---|---|
+| M19 | SRT serialization merges consecutive segments with identical text into one cue that spans them, as `youtube-whisperer`'s transcription path did at the source revision. This affects T3. |
+| M20 | Publication requires that the media file still exists. If it is gone, the job fails with category `missing` and no SRT is written, so no SRT is left without its media and the transcriber never creates a directory. This affects T6 and T7. |
 
 ## 14. Open questions
 
