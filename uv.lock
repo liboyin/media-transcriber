@@ -384,7 +384,7 @@ wheels = [
 [[package]]
 name = "pathlib-extensions"
 version = "0.0.1"
-source = { git = "https://github.com/liboyin/pathlib-extensions.git#b625087792f102cc011ba2e461f06545236c2d14" }
+source = { git = "https://github.com/liboyin/pathlib-extensions.git#f9adcc8f90277e80e15c2ad99d157fd84884d663" }
 
 [[package]]
 name = "pathspec"

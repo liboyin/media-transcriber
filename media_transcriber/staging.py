@@ -3,7 +3,9 @@
 The staging root is the SMB share that the collector writes into. Every path that leaves this
 module is inside the root after symlinks are resolved. The transcriber only ever adds new SRT
 files: publication goes through pathlib-extensions' `StagedFile` under `NEVER`, so an existing or
-competing file is never replaced (M9).
+competing file is never replaced (M9). Where the filesystem has no hard links, such as the Mac's SMB
+mount, a competing file that appears in the instant between the final check and the rename is
+replaced instead (M21).
 
 Nothing here decides a job's state. The worker (T7) maps these exceptions to failure categories.
 """
@@ -176,7 +178,9 @@ def publish_srt(paths: JobPaths, text: str, checkpoint: Callable[[], None] = _no
     """Publish complete SRT text atomically beside its media, never replacing a file (DESIGN 5.6).
 
     The text is written as UTF-8, without newline translation, into a fresh hidden `.staging-*`
-    directory beside the SRT path, then hard-linked into place if nothing is there. A failure or an
+    directory beside the SRT path, then hard-linked into place if nothing is there. Where the
+    filesystem refuses hard links, it is renamed into place after a check that nothing is there,
+    so a file appearing between that check and the rename is replaced (DESIGN M21). A failure or an
     exception leaves the SRT path untouched and removes the stage directory. An abrupt exit of the
     process can leave the stage directory behind, but never a partial SRT.
 
@@ -207,7 +211,7 @@ def publish_srt(paths: JobPaths, text: str, checkpoint: Callable[[], None] = _no
     # into a directory that does not exist, so the media check alone does not prevent that.
     if not paths.srt.resolve().parent.is_dir():
         raise FileNotFoundError(f'The directory of the SRT target does not exist: {paths.srt}')
-    with StagedFile(paths.srt, OverwritePolicy.NEVER) as staged:
+    with StagedFile(paths.srt, OverwritePolicy.NEVER, rename_fallback=True) as staged:
         with staged.path.open('x', encoding='utf-8', newline='') as writer:
             for start in range(0, len(text), WRITE_CHUNK_CHARS):
                 if start:

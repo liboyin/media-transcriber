@@ -1,5 +1,6 @@
 """Tests for path resolution, the marker and atomic SRT publication in a test-owned staging root."""
 
+import errno
 import os
 from pathlib import Path, PurePosixPath
 
@@ -26,6 +27,20 @@ def outside(tmp_path: Path) -> Path:
     directory.mkdir()
     (directory / 'secret.mp4').write_bytes(b'secret')
     return directory
+
+
+@pytest.fixture(params=['hard-links', 'no-hard-links'])
+def link_support(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> str:
+    """Run a publication test with real hard links, and again on a filesystem that refuses them (M21).
+
+    The Mac's SMB mount of the staging share fails `link` with ENOTSUP, which this simulates.
+    """
+    if request.param == 'no-hard-links':
+        def refuse(*args: object, **kwargs: object) -> None:
+            raise OSError(errno.ENOTSUP, 'Operation not supported')
+
+        monkeypatch.setattr(os, 'link', refuse)
+    return request.param
 
 
 def job(root: Path, path: str = 'show/episode.mp4') -> testee.JobPaths:
@@ -216,7 +231,7 @@ def test_srt_exists_raises_for_a_directory_at_the_srt_path(root: Path) -> None:
         testee.srt_exists(job(root))
 
 
-def test_publish_srt_writes_the_exact_text_as_utf8(root: Path) -> None:
+def test_publish_srt_writes_the_exact_text_as_utf8(root: Path, link_support: str) -> None:
     """The published file holds the text's UTF-8 bytes, with no newline translation, and no stage is left."""
     text = '1\n00:00:00,000 --> 00:00:01,000\n你好 world\r\n'
 
@@ -233,7 +248,7 @@ def test_publish_srt_publishes_an_empty_text(root: Path) -> None:
     assert (root / 'show' / 'episode.srt').read_bytes() == b''
 
 
-def test_publish_srt_keeps_an_existing_srt(root: Path) -> None:
+def test_publish_srt_keeps_an_existing_srt(root: Path, link_support: str) -> None:
     """An SRT that exists at publication is never replaced, and the call reports it as kept."""
     srt = root / 'show' / 'episode.srt'
     srt.write_text('old')
@@ -244,7 +259,7 @@ def test_publish_srt_keeps_an_existing_srt(root: Path) -> None:
     assert stage_dirs(root / 'show') == []
 
 
-def test_publish_srt_keeps_a_file_that_appears_during_publication(root: Path) -> None:
+def test_publish_srt_keeps_a_file_that_appears_during_publication(root: Path, link_support: str) -> None:
     """A competing SRT created while the text is staged wins, and the call reports it as kept."""
     paths = job(root)
     srt = root / 'show' / 'episode.srt'
@@ -262,7 +277,7 @@ def test_publish_srt_keeps_a_file_that_appears_during_publication(root: Path) ->
 
 
 def test_publish_srt_checks_before_writing_between_chunks_and_before_linking(
-    root: Path, monkeypatch: pytest.MonkeyPatch,
+    root: Path, monkeypatch: pytest.MonkeyPatch, link_support: str,
 ) -> None:
     """The checkpoint runs first, between every two chunks, and once more after the text is complete."""
     monkeypatch.setattr(testee, 'WRITE_CHUNK_CHARS', 4)
