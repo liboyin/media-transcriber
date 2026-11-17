@@ -9,7 +9,7 @@ Transcribe media on a shared staging area into SRT subtitles, as a LAN-only HTTP
 **Status:**
 
 - The governance framework, the devcontainer and the gates are in place ([T1](tasks/closed/T1.md)).
-- The engine interface, the transcription pipeline ([T3](tasks/closed/T3.md)), the staging layer ([T6](tasks/closed/T6.md)) and the faster-whisper adapter ([T4](tasks/closed/T4.md)) exist. No service runs yet. [tasks/TODO.md](tasks/TODO.md) gives the order of the work.
+- The engine interface, the transcription pipeline ([T3](tasks/closed/T3.md)), the staging layer ([T6](tasks/closed/T6.md)), and the faster-whisper ([T4](tasks/closed/T4.md)) and MLX Whisper ([T5](tasks/closed/T5.md)) adapters exist. No service runs yet. [tasks/TODO.md](tasks/TODO.md) gives the order of the work.
 - The CUDA machine is not available yet (DESIGN decision M15).
 
 ## Security / trust model
@@ -62,6 +62,7 @@ The CUDA deployment is [T10](tasks/open/T10.md), and the Mac deployment is [T11]
 
 - `pyproject.toml` declares the dependencies: runtime dependencies under `[project]`, and dev tools in the `dev` dependency group.
 - `uv.lock` pins the full resolution, including the artifact hashes.
+- mlx-whisper is a runtime dependency only on macOS, through a platform marker. Linux installs neither MLX nor torch ([T5](tasks/closed/T5.md#dependency-measurement)).
 - The lock changes only through deliberate commands: `uv lock`, the update script below, or `uv add`. A rebuild of the container never changes it.
 
 Refresh the lock from the dev container with the update script. The script locks, and then applies the new lock to the container's venv with `uv sync --locked`.

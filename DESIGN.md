@@ -438,6 +438,7 @@ This section records the modules as tasks build them. It describes the current c
 | `media_transcriber/whisper_languages.py` | Whisper's 100 language codes, and the mapping of a BCP 47 tag to its primary subtag (5.4) | T4 |
 | `media_transcriber/weights.py` | Offline lookup of a profile's snapshot in the weights directory, which has the layout of a Hugging Face cache (section 9, M22) | T4 |
 | `media_transcriber/faster_whisper_adapter.py` | The faster-whisper adapter: CUDA, the profile's precision, sequential decoding with the library's defaults, and the `float32` baseline profile (section 8, M13). It refuses a snapshot without `tokenizer.json`, which the library would fetch from the Hub | T4 |
+| `media_transcriber/mlx_whisper_adapter.py` | The MLX Whisper adapter for macOS, and the `float16` baseline profile (section 8, M13, M23). It loads through mlx-whisper's `ModelHolder`, which `transcribe` always reads, and imports MLX only when it loads or transcribes | T5 |
 
 Dataflow of one transcription: `run_pipeline` calls `decode_waveform`, then the model's `transcribe`. It consumes every segment through `reject_bad_segments` and then calls `segments_to_srt`. ffmpeg runs as a subprocess, not through `ffmpeg-python`, because the decoder needs chunked reads and owns the child's lifecycle.
 
