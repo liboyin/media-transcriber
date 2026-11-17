@@ -185,7 +185,8 @@ These follow the collector's sections 5.8 to 5.10 (assumption A2):
 A running thread is not proof of progress, because a thread blocked on a stalled share still runs. Health therefore follows the collector's C55 rule, not its older C43 rule (decision M17):
 
 - The worker records whether its current activity touches the share. Idle waiting, the marker check, resolving paths, decoding and publication touch it. Loading the model and transcribing do not, because the waveform is already in memory.
-- While the worker is idle or touches the share, `/health` compares the age of its last marker check or progress report with a staleness limit. Decoding reports progress as ffmpeg's output arrives, and publication reports it as bytes are written.
+- While the worker is idle or touches the share, `/health` compares the age of its last marker check with a staleness limit (M18).
+- During decoding and publication, the worker checks the marker again at an interval, between chunks of ffmpeg's output or of the written file. Progress alone does not refresh the check, because a successful read or write does not show that the marker is still present.
 - During an activity that does not touch the share, `/health` reports the last check, its age and the activity's duration for information only, without calling them stale. A long transcription is normal and is not unhealthy.
 - The service cannot tell a slow transcription from a hung one. `/health` reports the duration and leaves the judgment to the user.
 
@@ -381,6 +382,12 @@ Decision from the external review of revision `e6b4354`, applied at the user's r
 | ID | Decision |
 |---|---|
 | M17 | Health judges progress, not thread liveness, following the collector's C55 rule: the staleness limit applies only while the worker is idle or in an activity that touches the share (5.11). |
+
+Decision on the open point that T1 recorded in T7, made by the user on 2026-11-17:
+
+| ID | Decision |
+|---|---|
+| M18 | Refines M17 as `youtube-collector`'s T42 refines C55: during decoding and publication, the worker refreshes staging freshness only by checking the marker again between chunks. A progress report alone does not refresh it (5.11). |
 
 ## 14. Open questions
 
