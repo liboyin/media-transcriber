@@ -193,6 +193,8 @@ def publish_srt(paths: JobPaths, text: str, checkpoint: Callable[[], None] = _no
 
     Raises:
         MediaNotFoundError: If the media file is gone, so no SRT would sit beside it (M20).
+        FileNotFoundError: If the directory that the SRT path resolves into does not exist.
+            Publication never creates a directory.
         NotAFileError: If something other than a file is at the SRT path.
         FileExistsError: If something other than a file appeared at the SRT path meanwhile.
         OSError: If staging, writing or linking fails, for example on a filesystem without hard
@@ -201,6 +203,10 @@ def publish_srt(paths: JobPaths, text: str, checkpoint: Callable[[], None] = _no
     checkpoint()
     if not paths.media.is_file():
         raise MediaNotFoundError(f'The media file disappeared before its SRT was published: {paths.media}')
+    # StagedFile creates missing parents of the resolved target. A dangling SRT symlink can point
+    # into a directory that does not exist, so the media check alone does not prevent that.
+    if not paths.srt.resolve().parent.is_dir():
+        raise FileNotFoundError(f'The directory of the SRT target does not exist: {paths.srt}')
     with StagedFile(paths.srt, OverwritePolicy.NEVER) as staged:
         with staged.path.open('x', encoding='utf-8', newline='') as writer:
             for start in range(0, len(text), WRITE_CHUNK_CHARS):

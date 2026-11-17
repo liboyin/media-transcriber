@@ -337,3 +337,15 @@ def test_publish_srt_never_recreates_a_removed_directory(root: Path) -> None:
         testee.publish_srt(paths, 'text')
 
     assert not (root / 'show').exists()
+
+
+def test_publish_srt_never_creates_the_directory_of_a_dangling_srt_symlink(root: Path) -> None:
+    """A dangling SRT symlink into a missing directory inside the root fails instead of creating it."""
+    (root / 'show' / 'episode.srt').symlink_to(root / 'absent' / 'episode.srt')
+    paths = job(root)
+
+    with pytest.raises(FileNotFoundError, match='directory of the SRT target'):
+        testee.publish_srt(paths, 'text')
+
+    assert not (root / 'absent').exists()
+    assert stage_dirs(root / 'show') == []
