@@ -15,7 +15,9 @@ ARG APT_PROXY
 # downloads an interpreter. The venv lives outside the project directory because the dev
 # container bind-mounts the workspace over it, which would hide an in-project .venv.
 # UV_PROJECT_ENVIRONMENT points the dev container's `uv sync` (update-dependencies.sh) at the
-# same venv.
+# same venv. It applies to every project, so unset it and VIRTUAL_ENV before running uv in
+# another checkout, such as ../agent-workflow-common; otherwise uv re-syncs /opt/venv to that
+# project's dependencies.
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONFAULTHANDLER=1 \
     PYTHONUNBUFFERED=1 \
