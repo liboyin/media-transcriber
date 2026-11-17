@@ -9,7 +9,7 @@ Transcribe media on a shared staging area into SRT subtitles, as a LAN-only HTTP
 **Status:**
 
 - The governance framework, the devcontainer and the gates are in place ([T1](tasks/closed/T1.md)).
-- The engine interface, the transcription pipeline ([T3](tasks/closed/T3.md)) and the staging layer ([T6](tasks/closed/T6.md)) exist. No service runs yet. [tasks/TODO.md](tasks/TODO.md) gives the order of the work.
+- The engine interface, the transcription pipeline ([T3](tasks/closed/T3.md)), the staging layer ([T6](tasks/closed/T6.md)) and the faster-whisper adapter ([T4](tasks/closed/T4.md)) exist. No service runs yet. [tasks/TODO.md](tasks/TODO.md) gives the order of the work.
 - The CUDA machine is not available yet (DESIGN decision M15).
 
 ## Security / trust model

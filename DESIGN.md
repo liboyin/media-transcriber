@@ -435,7 +435,12 @@ This section records the modules as tasks build them. It describes the current c
 | `media_transcriber/srt.py` | SRT serialization, with cues of identical text merged (5.6, M19) | T3 |
 | `media_transcriber/pipeline.py` | `run_pipeline`: decoding, transcription, rejection and serialization with a loaded model. It returns the text and the stage timings, and never touches staging. The worker and the benchmark share it (5.5, 7.3) | T3 |
 | `media_transcriber/staging.py` | Request path validation without filesystem access, containment in the staging root through symlinks, the marker check, the `NEVER` preflight, and atomic SRT publication through `StagedFile` that never creates a directory. Where hard links are unsupported, publication renames after a check (5.1, 5.2, 5.6, 5.10, M18, M20, M21) | T6, T12 |
+| `media_transcriber/whisper_languages.py` | Whisper's 100 language codes, and the mapping of a BCP 47 tag to its primary subtag (5.4) | T4 |
+| `media_transcriber/weights.py` | Offline lookup of a profile's snapshot in the weights directory, which has the layout of a Hugging Face cache (section 9, M22) | T4 |
+| `media_transcriber/faster_whisper_adapter.py` | The faster-whisper adapter: CUDA, the profile's precision, sequential decoding with the library's defaults, and the `float32` baseline profile (section 8, M13). It refuses a snapshot without `tokenizer.json`, which the library would fetch from the Hub | T4 |
 
 Dataflow of one transcription: `run_pipeline` calls `decode_waveform`, then the model's `transcribe`. It consumes every segment through `reject_bad_segments` and then calls `segments_to_srt`. ffmpeg runs as a subprocess, not through `ffmpeg-python`, because the decoder needs chunked reads and owns the child's lifecycle.
+
+Each adapter resolves its weights through `resolve_weights` and passes the engine library only the local snapshot directory, because both libraries download whenever they get a repository name. `stubs/` holds narrow type stubs for the engine libraries, which ship none.
 
 Staging is separate from the pipeline. The worker (T7) will call `require_marker`, `resolve_job_paths` and `srt_exists` before the pipeline, and `publish_srt` after it, with the marker check as the checkpoint of both decoding and publication.
