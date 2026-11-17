@@ -11,9 +11,8 @@ This file holds the recommended order, the constraints that several tasks share,
 The tasks below were recorded with the governance scaffold, [T1](closed/T1.md). They are compact until accepted, and each is bounded against DESIGN when it starts.
 
 1. T4 and T5, in any order: the two engine adapters. [T3](closed/T3.md), the pipeline, and [T6](closed/T6.md), the staging layer, are closed.
-2. T12, which the Mac's staging share needs before any publication there (DESIGN M21).
-3. T7, then T8: the store and worker, then the HTTP API and the service entry point.
-4. T9: the benchmark, after at least one adapter.
+2. T7, then T8: the store and worker, then the HTTP API and the service entry point.
+3. T9: the benchmark, after at least one adapter.
 
 These tasks are outside the sequence:
 
@@ -35,4 +34,3 @@ A host check needs a Docker daemon, a real accelerator or real host data, and ru
 - [T9](open/T9.md) — Medium. Benchmark command and result sets.
 - [T10](open/T10.md) — Medium, blocked on the CUDA machine. Production CUDA image and Compose service.
 - [T11](open/T11.md) — Medium. Mac deployment with launchd.
-- [T12](open/T12.md) — High. Publish on filesystems without hard links.
