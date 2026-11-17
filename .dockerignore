@@ -1,0 +1,62 @@
+# Version control
+.git
+.gitignore
+
+# IDE files
+.vscode
+.devcontainer
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Python caches and build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.coverage
+.coverage*
+.eggs/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.Python
+.venv/
+build/
+dist/
+htmlcov/
+pip-wheel-metadata/
+*.egg
+*.egg-info/
+
+# AI agent files
+.agents
+.claude
+AGENTS.md
+CLAUDE.md
+agent-workflow.json
+.remember
+.superpowers
+
+# Documentation and durable review records
+README.md
+DESIGN.md
+STYLE.md
+project-reviews.md
+tasks/
+
+# Docker files
+Dockerfile
+.dockerignore
+docker-compose*.yaml
+
+# Machine-specific settings (no secrets)
+.env
+
+# Scripts
+check-coverage.sh
+update-dependencies.sh
+
+# Misc.
+tests/

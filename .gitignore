@@ -1,0 +1,21 @@
+# Machine-specific settings (no secrets); never commit
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage*
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+
+# Misc.
+.remember/
+.claude/settings.*.json
+.vscode/

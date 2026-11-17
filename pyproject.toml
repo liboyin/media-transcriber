@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools >= 64.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "media-transcriber"
+version = "0.0.1"
+description = "Transcribe staged media into SRT subtitles and benchmark Whisper engines"
+requires-python = ">=3.14"
+authors = [
+  {name = "Libo Yin", email = "liboyin830@gmail.com"}
+]
+dependencies = []
+
+[dependency-groups]
+dev = [
+  "mypy",
+  "pytest",
+  "pytest-cov",
+  "pytest-mock",
+  "pytest-randomly",
+  "ruff",
+]
+
+[tool.mypy]
+check_untyped_defs = true
+disallow_untyped_defs = true
+strict_optional = true
+warn_redundant_casts = true
+warn_unused_configs = true
+warn_unused_ignores = true
+# Missing imports are errors, so a misspelt module or a missing stub fails the gate. Packages that
+# ship no type information get a narrow override when the application first imports them; adding
+# one earlier makes warn_unused_configs report an unused section on every run.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers --cov=media_transcriber --cov-report=term-missing --cov-fail-under=80"
+# AGENTS.md requires new warnings to be resolved, so any warning fails its test; a test that
+# expects one asserts it with pytest.warns, and an accepted tooling warning needs a narrow,
+# commented filter here.
+filterwarnings = ["error"]
+xfail_strict = true
+
+[tool.coverage.run]
+branch = true
+
+[tool.setuptools.packages.find]
+include = ["media_transcriber*"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+# pycodestyle, Pyflakes, import order, bugbear, pyupgrade and pydocstyle. The target Python
+# comes from requires-python.
+select = ["E", "W", "F", "I", "B", "UP", "D"]
+
+[tool.ruff.lint.pydocstyle]
+# AGENTS.md requires Google-style docstrings.
+convention = "google"
