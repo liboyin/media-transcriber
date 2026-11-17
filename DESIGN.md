@@ -2,7 +2,7 @@
 
 This document owns the product requirements, system design, product contracts and accepted user decisions. [README](README.md) will cover setup and operation. Task files, AGENTS and the repository skills will own outstanding work and working procedures once the governance scaffolding exists (section 11).
 
-Status: accepted requirements, written 2026-11-17 in a design discussion that started from `TRANSCRIPTION_REDESIGN.md` in `youtube-whisperer` at revision `474f5dc` (the "source revision"). Nothing is implemented yet. Section 13 records the user's decisions. Section 15 records assumptions that stand unless the user objects. Record later decisions with new IDs after the last one in section 13, and record the architecture in a new section as components are built.
+Status: accepted requirements, written 2026-11-17 in a design discussion that started from `TRANSCRIPTION_REDESIGN.md` in `youtube-whisperer` at revision `474f5dc` (the "source revision"). Section 16 records what is implemented. Section 13 records the user's decisions. Section 15 records assumptions that stand unless the user objects. Record later decisions with new IDs after the last one in section 13, and record the architecture in a new section as components are built.
 
 Requirement words (MUST, SHOULD, MAY) follow BCP 14. Behavior inherited from `youtube-whisperer` cites the source revision. It describes what the code did there, which this project reimplements rather than imports.
 
@@ -414,3 +414,17 @@ These follow from repository evidence or the discussion, and stand unless the us
 - **A3:** the Python version follows the collector (3.14) if faster-whisper, CTranslate2 and MLX Whisper publish wheels for it. Otherwise the project uses the newest version they all support. The builder verifies this before scaffolding.
 - **A4:** the Mac supervisor is launchd, unless the builder finds a simpler equivalent. The service is started by the user, and the repository provides the configuration.
 - **A5:** the tuning values (retention, grace periods, pause before exit, repetitions) are starting defaults, not measured requirements.
+
+## 16. Architecture
+
+This section records the modules as tasks build them. It describes the current code, not plans.
+
+| Module | Responsibility | Task |
+|---|---|---|
+| `media_transcriber/engine.py` | `Segment`, `Profile`, and the `EngineAdapter` and `TranscriptionModel` protocols that every engine implements (section 8) | T3 |
+| `media_transcriber/audio.py` | Decoding with an ffmpeg child process into a mono 16 kHz float32 waveform, read in chunks with a checkpoint between them (5.5 step 4, M18) | T3 |
+| `media_transcriber/rejection.py` | Whole-run rejection of known bad phrases (5.5 step 7) | T3 |
+| `media_transcriber/srt.py` | SRT serialization, with cues of identical text merged (5.6, M19) | T3 |
+| `media_transcriber/pipeline.py` | `run_pipeline`: decoding, transcription, rejection and serialization with a loaded model. It returns the text and the stage timings, and never touches staging. The worker and the benchmark share it (5.5, 7.3) | T3 |
+
+Dataflow of one transcription: `run_pipeline` calls `decode_waveform`, then the model's `transcribe`. It consumes every segment through `reject_bad_segments` and then calls `segments_to_srt`. ffmpeg runs as a subprocess, not through `ffmpeg-python`, because the decoder needs chunked reads and owns the child's lifecycle.
