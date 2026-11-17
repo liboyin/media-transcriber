@@ -10,7 +10,9 @@ requires-python = ">=3.14"
 authors = [
   {name = "Libo Yin", email = "liboyin830@gmail.com"}
 ]
-dependencies = []
+dependencies = [
+  "numpy>=2.5.5",
+]
 
 [dependency-groups]
 dev = [
