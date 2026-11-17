@@ -65,7 +65,7 @@ Ask the [recorded reviewer](#reviewer-session) to read this skill and perform st
 - The base revision. Read it from the candidate with `git rev-parse HEAD`.
 - The in-scope paths, each included untracked file, and the unrelated dirty paths to ignore.
 - The purpose, in a few sentences.
-- The path to the accepted boundary. Under the [task rules](../../../tasks/README.md#two-kinds-of-work), this can be an open task or an ad-hoc completion record in the candidate.
+- The path to each accepted boundary. A task group has one for each task. Under the [task rules](../../../tasks/README.md#two-kinds-of-work), this can be an open task or an ad-hoc completion record in the candidate.
 - The location of the working record that holds the evidence, and a separate report destination if you need one.
 
 These rules protect the reviewer's independence:
@@ -113,7 +113,7 @@ Try to falsify the change:
 
 Classify each finding by its impact, its likelihood, the requirements and the risk of deferral:
 
-- **Blocking:** the main agent must resolve it before the commit.
+- **Blocking:** the main agent must resolve it before the change reaches the main branch.
 - **Non-blocking:** a genuine issue that the main agent may reasonably defer.
 - **Nit:** a low-impact issue of style or readability with an obvious local remedy.
 

@@ -160,9 +160,10 @@ The governance files are this file, [STYLE.md](STYLE.md), [tasks/README.md](task
 
 **Review.**
 
-- Every non-trivial change MUST pass the [review procedure](.agents/skills/adversarial-review/SKILL.md#procedure) before the commit.
+- Every non-trivial change MUST pass the [review procedure](.agents/skills/adversarial-review/SKILL.md#procedure) before it reaches the main branch.
 - The reviewer owns the classification and the verdict. The main agent owns the investigation, the fixes and the dispositions.
-- Commit only when no Blocking finding remains and every finding has a disposition.
+- Bring a change to the main branch only when no Blocking finding remains and every finding has a disposition.
+- A candidate MAY be committed on a work branch before its review, so that the review assesses exact commits. Do not merge or push that branch until the review passes.
 - Report deferred findings to the user.
 - Confirm with the user each disposition that changes scope, behavior, architecture or accepted risk.
 - Never discard or reclassify a finding silently.
@@ -223,6 +224,7 @@ A host check runs outside the devcontainer's isolation. It can write into the sh
 # Version Control
 
 - Keep functionally independent changes in separate, self-contained commits. Commit a change once it is implemented, validated and documented.
+- If a rewrite changes a commit that a committed file cites by hash, update the citation in the same rewrite.
 - Honor a request to leave a draft uncommitted.
 - Stage explicit paths. NEVER use `git add -A` or `git commit -a`.
 - Inspect the staged diff and the repository status immediately before the commit. Exclude unrelated work.

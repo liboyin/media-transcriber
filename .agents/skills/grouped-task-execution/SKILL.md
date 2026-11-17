@@ -54,6 +54,7 @@ After the group's commits, the main agent reviews the committed range itself. Th
 2. Look especially for risks that only the combined changes create.
 3. Report each gap with its location, evidence and impact. Separate defects from hypotheses and from nits.
 4. Report the gaps before you fix them, unless the user asked for fixes. A gap does not expand authorization.
+   - You MAY fix a gap in documentation or comments alone at once, if the fix changes no behavior and settles no decision. Report it with the other gaps.
 5. Fix each gap under the normal rules for boundaries, gates, review and completion records.
 6. Repeat until no gap remains, or until each gap has a recorded disposition.
 
