@@ -282,7 +282,7 @@ Service deployment:
 - **Apple:** one native macOS process runs from a uv-managed environment, and a supervisor restarts it (assumption A4). The database and model weights are in configured local directories outside the share. Docker on the Mac cannot use Metal, so the Mac service MUST NOT run in a container.
 - Both are unauthenticated and LAN-only, as decision D5 at the source revision states. Neither is exposed to the public internet.
 - The SQLite database is never on the SMB share.
-- Model weights are downloaded once into the configured weights directory. Neither the service nor a test downloads weights implicitly during a job.
+- Model weights are downloaded once into the configured weights directory, which has the layout of a Hugging Face cache (M22). Neither the service nor a test downloads weights implicitly during a job.
 
 Development environment (M10):
 
@@ -397,6 +397,13 @@ Decisions made by the user when T3 and T6 were bounded, and after T2's checks of
 | M19 | SRT serialization merges consecutive segments with identical text into one cue that spans them, as `youtube-whisperer`'s transcription path did at the source revision. This affects T3. |
 | M20 | Publication requires that the media file still exists. If it is gone, the job fails with category `missing` and no SRT is written, so no SRT is left without its media and the transcriber never creates a directory. This affects T6 and T7. |
 | M21 | Refines 5.6 and M9 after T2's checks showed that the Mac's SMB mount supports neither hard links nor an exclusive rename, and that a plain rename replaces files. Where hard links are unsupported, publication writes the complete SRT in the hidden stage, checks that no SRT exists, and renames the stage into place. The user accepts that an SRT created by another writer between the check and the rename is replaced. Only another transcription of the same media could create one. The behavior is added to pathlib-extensions. This affects T6, T7, T11 and the new T12. |
+
+Decisions made by the user when T4 and T5 were bounded, on 2026-11-17:
+
+| ID | Decision |
+|---|---|
+| M22 | The weights directory has the layout of a Hugging Face cache. An adapter finds a profile's weights offline from its model and revision, at `models--<org>--<name>/snapshots/<revision>/`. The path enforces the revision pin. Both libraries download whenever they get a name that is not a local directory, so an adapter passes them only the resolved directory. This affects T4, T5, T8, T10, T11 and T2. |
+| M23 | The MLX baseline profile runs full `large-v3` in `float16`, mlx-whisper's default. That is the precision of T2's smoke test on the M2 Mac. The CUDA baseline stays `float32`. Choosing each platform's default profile remains a benchmark decision (M5). This affects T5. |
 
 ## 14. Open questions
 
