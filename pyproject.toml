@@ -11,6 +11,8 @@ authors = [
   {name = "Libo Yin", email = "liboyin830@gmail.com"}
 ]
 dependencies = [
+  "faster-whisper>=1.2.1",
+  "huggingface-hub>=2.4.0",
   "numpy>=2.5.5",
   "pathlib-extensions",
 ]
@@ -32,6 +34,9 @@ strict_optional = true
 warn_redundant_casts = true
 warn_unused_configs = true
 warn_unused_ignores = true
+# Narrow stubs for engine libraries that ship no type information. They declare only the names
+# that the adapters use (the shared constraints of T4, the faster-whisper adapter).
+mypy_path = "stubs"
 # Missing imports are errors, so a misspelt module or a missing stub fails the gate. Packages that
 # ship no type information get a narrow override when the application first imports them; adding
 # one earlier makes warn_unused_configs report an unused section on every run.

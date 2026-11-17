@@ -59,4 +59,5 @@ check-coverage.sh
 update-dependencies.sh
 
 # Misc.
+stubs/
 tests/
