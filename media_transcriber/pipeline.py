@@ -1,8 +1,10 @@
 """The transcription pipeline that the worker and the benchmark both run (DESIGN 5.5, 7.3).
 
-It covers DESIGN 5.5 steps 4 and 6 to 8 with the model already loaded: decoding, transcription,
-rejection and SRT serialization. It never touches staging. The worker publishes the returned text,
-and the benchmark writes it to a result set.
+It covers DESIGN 5.5 steps 4 to 8: decoding, the model load, transcription, rejection and SRT
+serialization. It takes a model loader rather than a model, so that decoding comes before the load
+(decision M25). The worker loads a profile only if it is not resident, and the benchmark's loader
+returns its resident model. It never touches staging. The worker publishes the returned text, and
+the benchmark writes it to a result set.
 """
 
 import time
@@ -27,6 +29,7 @@ class PipelineResult:
         segment_count: How many segments the engine produced, before cues were merged.
         audio_seconds: The duration of the decoded waveform.
         decoding_seconds: Time spent decoding the media file.
+        load_seconds: Time spent in the model loader.
         transcription_seconds: Time spent producing and consuming every segment. The rejection
             check is included, because it runs while the lazy segments are consumed.
         serialization_seconds: Time spent turning the segments into SRT text.
@@ -36,6 +39,7 @@ class PipelineResult:
     segment_count: int
     audio_seconds: float
     decoding_seconds: float
+    load_seconds: float
     transcription_seconds: float
     serialization_seconds: float
 
@@ -46,19 +50,21 @@ def _no_checkpoint() -> None:
 
 def run_pipeline(
     media: Path,
-    model: TranscriptionModel,
+    load_model: Callable[[], TranscriptionModel],
     language: str,
     checkpoint: Callable[[], None] = _no_checkpoint,
     clock: Callable[[], float] = time.perf_counter,
 ) -> PipelineResult:
-    """Decode a media file, transcribe it, apply the rejection policy and serialize the result.
+    """Decode a media file, load the model, transcribe, apply the rejection policy and serialize.
 
-    Every segment is consumed, and the rejection check has passed, before serialization starts,
-    so a rejected run produces no SRT text (DESIGN 5.5 steps 6 and 7).
+    The loader runs only after decoding has succeeded, so a file that fails to decode, or decodes
+    to no samples, causes no model work (DESIGN 5.5 steps 4 and 5). Every segment is consumed, and
+    the rejection check has passed, before serialization starts, so a rejected run produces no SRT
+    text (DESIGN 5.5 steps 6 and 7).
 
     Args:
         media: The media file to decode.
-        model: The loaded model.
+        load_model: Returns the loaded model. Called once, after decoding.
         language: The engine's language code for the source language.
         checkpoint: Called between chunks of decoded audio, as `decode_waveform` describes.
         clock: A monotonic clock in seconds, for the stage timings.
@@ -70,11 +76,13 @@ def run_pipeline(
         DecodingError: If ffmpeg fails.
         EmptyAudioError: If the media file decodes to no samples. No model work has started.
         RejectedTranscriptionError: If a segment contains a rejected substring.
-        Exception: Whatever `checkpoint` or the model raises, unchanged.
+        Exception: Whatever `checkpoint`, `load_model` or the model raises, unchanged.
     """
     started = clock()
     waveform = decode_waveform(media, checkpoint)
     decoded = clock()
+    model = load_model()
+    loaded = clock()
     segments = list(reject_bad_segments(model.transcribe(waveform, language)))
     transcribed = clock()
     srt_text = segments_to_srt(segments)
@@ -84,6 +92,7 @@ def run_pipeline(
         segment_count=len(segments),
         audio_seconds=waveform.size / SAMPLE_RATE,
         decoding_seconds=decoded - started,
-        transcription_seconds=transcribed - decoded,
+        load_seconds=loaded - decoded,
+        transcription_seconds=transcribed - loaded,
         serialization_seconds=serialized - transcribed,
     )

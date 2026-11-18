@@ -52,13 +52,16 @@ def test_run_pipeline_returns_srt_text_counts_and_stage_timings(decoding: FakeDe
     def checkpoint() -> None:
         pass
 
-    result = testee.run_pipeline(Path('media.mp4'), model, 'en', checkpoint, stepping_clock(10.0, 11.0, 13.0, 16.0))
+    result = testee.run_pipeline(
+        Path('media.mp4'), lambda: model, 'en', checkpoint, stepping_clock(10.0, 11.0, 15.0, 17.0, 20.0),
+    )
 
     assert result == testee.PipelineResult(
         srt_text=segments_to_srt(SEGMENTS),
         segment_count=3,
         audio_seconds=0.5,
         decoding_seconds=1.0,
+        load_seconds=4.0,
         transcription_seconds=2.0,
         serialization_seconds=3.0,
     )
@@ -81,7 +84,7 @@ def test_run_pipeline_consumes_every_segment_before_serializing(
 
     monkeypatch.setattr(testee, 'segments_to_srt', spy)
 
-    testee.run_pipeline(Path('media.mp4'), model, 'en')
+    testee.run_pipeline(Path('media.mp4'), lambda: model, 'en')
 
     assert consumed_at_serialization == [len(SEGMENTS)]
 
@@ -95,7 +98,7 @@ def test_run_pipeline_rejects_the_run_before_serializing(
     monkeypatch.setattr(testee, 'segments_to_srt', serialized.append)
 
     with pytest.raises(RejectedTranscriptionError):
-        testee.run_pipeline(Path('media.mp4'), model, 'zh')
+        testee.run_pipeline(Path('media.mp4'), lambda: model, 'zh')
 
     assert serialized == []
 
@@ -105,22 +108,26 @@ def test_run_pipeline_propagates_an_engine_failure(decoding: FakeDecoding) -> No
     model = FakeModel(SEGMENTS, error=MemoryError('device out of memory'))
 
     with pytest.raises(MemoryError, match='device out of memory'):
-        testee.run_pipeline(Path('media.mp4'), model, 'en')
+        testee.run_pipeline(Path('media.mp4'), lambda: model, 'en')
 
 
 def test_run_pipeline_does_no_model_work_for_empty_audio(tmp_path: Path) -> None:
-    """Real decoding of a file with no samples fails before the model is called."""
+    """Real decoding of a file with no samples fails before the model is loaded or called."""
     media = tmp_path / 'empty.wav'
     with wave.open(str(media), 'wb') as writer:
         writer.setnchannels(1)
         writer.setsampwidth(2)
         writer.setframerate(16000)
-    model = FakeModel(SEGMENTS)
+    loads: list[FakeModel] = []
+
+    def load() -> FakeModel:
+        loads.append(FakeModel(SEGMENTS))
+        return loads[-1]
 
     with pytest.raises(EmptyAudioError):
-        testee.run_pipeline(media, model, 'en')
+        testee.run_pipeline(media, load, 'en')
 
-    assert model.calls == []
+    assert loads == []
 
 
 def test_run_pipeline_end_to_end_with_real_decoding(tmp_path: Path) -> None:
@@ -133,9 +140,36 @@ def test_run_pipeline_end_to_end_with_real_decoding(tmp_path: Path) -> None:
         writer.writeframes(np.full(1600, 16384, dtype='<i2').tobytes())
     model = FakeModel([Segment(0.0, 0.1, 'beep')])
 
-    result = testee.run_pipeline(media, model, 'en')
+    result = testee.run_pipeline(media, lambda: model, 'en')
 
     [(passed_waveform, _)] = model.calls
     np.testing.assert_array_equal(passed_waveform, np.full(1600, 0.5, dtype=np.float32))
     assert result.audio_seconds == pytest.approx(0.1)
     assert result.srt_text == '1\n00:00:00,000 --> 00:00:00,100\nbeep\n'
+
+
+def test_run_pipeline_loads_the_model_after_decoding_and_before_transcribing(decoding: FakeDecoding) -> None:
+    """The loader runs once, after decoding has finished, and its model is the one that transcribes (M25)."""
+    model = FakeModel(SEGMENTS)
+    events: list[str] = []
+
+    def load() -> FakeModel:
+        events.append(f'load after {len(decoding.calls)} decodings, {len(model.calls)} transcriptions')
+        return model
+
+    testee.run_pipeline(Path('media.mp4'), load, 'en')
+
+    assert events == ['load after 1 decodings, 0 transcriptions']
+    assert len(model.calls) == 1
+
+
+def test_run_pipeline_propagates_a_loader_failure_without_transcribing(decoding: FakeDecoding) -> None:
+    """An error from the loader propagates unchanged after decoding, and nothing is transcribed."""
+
+    def load() -> FakeModel:
+        raise LookupError('no such profile')
+
+    with pytest.raises(LookupError, match='no such profile'):
+        testee.run_pipeline(Path('media.mp4'), load, 'en')
+
+    assert len(decoding.calls) == 1
