@@ -103,6 +103,14 @@ class EngineAdapter(Protocol):
         """
         ...
 
+    def release(self) -> None:
+        """Release whatever the engine library still holds of a model this adapter loaded.
+
+        The worker calls it after dropping its own references and before another profile loads,
+        so that two models never occupy the accelerator at once (DESIGN 5.3).
+        """
+        ...
+
     def load(self, profile: Profile) -> TranscriptionModel:
         """Load the model that a profile names.
 

@@ -85,6 +85,9 @@ class FasterWhisperAdapter:
 
         return ctranslate2.get_cuda_device_count() > 0
 
+    def release(self) -> None:
+        """Release nothing: faster-whisper keeps no reference of its own, so dropping the model frees it."""
+
     def load(self, profile: Profile) -> FasterWhisperModel:
         """Load a profile's model on the GPU from the weights directory, without any download.
 

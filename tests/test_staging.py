@@ -342,6 +342,24 @@ def test_publish_srt_refuses_when_the_media_file_is_gone(root: Path) -> None:
     assert stage_dirs(root / 'show') == []
 
 
+def test_publish_srt_refuses_media_that_disappears_at_the_last_checkpoint(root: Path) -> None:
+    """Media moved away after the text is staged still publishes nothing: the last check precedes the link (M20)."""
+    paths = job(root)
+    calls: list[int] = []
+
+    def checkpoint() -> None:
+        calls.append(1)
+        if len(calls) == 2:  # the call immediately before the link, for text that fits one chunk
+            paths.media.unlink()
+
+    with pytest.raises(testee.MediaNotFoundError, match='disappeared'):
+        testee.publish_srt(paths, 'text', checkpoint)
+
+    assert len(calls) == 2
+    assert not (root / 'show' / 'episode.srt').exists()
+    assert stage_dirs(root / 'show') == []
+
+
 def test_publish_srt_never_recreates_a_removed_directory(root: Path) -> None:
     """If the media's whole directory was moved away, publication creates no directory in its place."""
     paths = job(root)

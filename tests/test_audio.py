@@ -172,6 +172,27 @@ def test_decode_waveform_reaps_ffmpeg_when_the_drain_thread_cannot_start(
     assert child.stdout is not None and child.stdout.closed
 
 
+def test_kill_decoders_ends_a_running_decoder_and_forgets_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, children: list[RecordingPopen],
+) -> None:
+    """A shutdown's kill reaches the running ffmpeg child, which is still reaped by its own call (DESIGN 5.9)."""
+    monkeypatch.setattr(testee, 'CHUNK_BYTES', 1000)
+    clip = write_wav(tmp_path / 'long.wav', [0] * (10 * testee.SAMPLE_RATE))
+    kills: list[int] = []
+
+    def checkpoint() -> None:
+        if not kills:
+            kills.append(testee.kill_decoders())
+
+    with pytest.raises(testee.DecodingError) as raised:
+        testee.decode_waveform(clip, checkpoint)
+
+    assert kills == [1]
+    assert raised.value.returncode < 0  # ended by the kill, not by finishing
+    assert_reaped(children)
+    assert testee.kill_decoders() == 0  # a finished decoder is no longer tracked
+
+
 def test_drain_keeps_only_the_tail_of_the_stream() -> None:
     """The drain reads to the end but keeps only the last STDERR_TAIL_BYTES bytes."""
     data = bytes(range(256)) * (3 * testee.STDERR_TAIL_BYTES // 256 + 1)

@@ -84,7 +84,7 @@ def load_profiles(path: Path | None, platform: str) -> ProfileSet:
             raise SettingsError(f'The profiles file {path} defines the profile {profile.name!r} twice')
         profiles[profile.name] = profile
     default = document.get('default', next(iter(profiles)))
-    if default not in profiles:
+    if not isinstance(default, str) or default not in profiles:
         raise SettingsError(f'The profiles file {path} names the default {default!r}, which it does not define')
     return ProfileSet(profiles, default)
 

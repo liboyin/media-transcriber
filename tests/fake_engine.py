@@ -52,6 +52,7 @@ class FakeAdapter:
         self.model = model if model is not None else FakeModel()
         self.error = error
         self.loads: list[str] = []
+        self.releases = 0
         self.on_load: list[Callable[[], None]] = []
         self.accelerator = True
 
@@ -71,6 +72,10 @@ class FakeAdapter:
         if self.error is not None:
             raise self.error
         return self.model
+
+    def release(self) -> None:
+        """Count the release."""
+        self.releases += 1
 
     def accelerator_available(self) -> bool:
         """Report the scripted availability."""

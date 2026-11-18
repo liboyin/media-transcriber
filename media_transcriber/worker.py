@@ -227,11 +227,13 @@ class Worker:
         self._pause_wait = pause_wait
         self._failed = False
         self._paused = False
-        self._resident: tuple[str, TranscriptionModel] | None = None
+        self._resident: tuple[str, str, TranscriptionModel] | None = None
+        """The resident profile's name, its engine, and its loaded model."""
         self._staging_check: StagingCheck | None = None
         now = monotonic()
         self._activity = Activity(ActivityName.IDLE, None, now, now)
         self._stopping = threading.Event()
+        self._abandoned = threading.Event()
         self._wakeup = threading.Event()
 
     @property
@@ -263,6 +265,16 @@ class Worker:
         """Ask the worker to stop taking jobs. The current job runs to its end first (DESIGN 5.9)."""
         self._stopping.set()
         self._wakeup.set()
+
+    def abandon(self) -> None:
+        """Give up the current job after the shutdown grace, so that restart recovery repeats it (DESIGN 5.9).
+
+        The worker stops taking jobs and records nothing more for the current one, which stays
+        `running`. The caller may then kill the job's decoder, whose failure must not be recorded
+        as the job's outcome. Safe to call from any thread.
+        """
+        self._abandoned.set()
+        self.stop()
 
     def run(self) -> None:
         """Recover interrupted jobs, then take jobs one by one until `stop`.
@@ -307,7 +319,9 @@ class Worker:
             logger.warning('The staging marker is present again; resuming work')
             self._paused = False
         job = store.next_job()
-        if job is None:
+        # A stop that arrives while the queue is read leaves the job queued: the shutdown grace is
+        # for a job already in progress, not for one that has yet to start (DESIGN 5.9).
+        if job is None or self._stopping.is_set():
             self._set_activity(ActivityName.IDLE, None)
             return Step.IDLE
         self._process(store, job)
@@ -325,9 +339,16 @@ class Worker:
             raise
         except Exception as error:
             failure = failure_for(run.phase, error)
+            # ffmpeg can fail on a vanished share before the first chunk reaches a marker check.
+            if failure.category is Category.DECODING and not self._check_marker():
+                failure = replace(failure, category=Category.FILESYSTEM,
+                                  message=f'{failure.message} (the staging marker was missing afterwards)')
             logger.warning('Job %s failed in phase %s (%s): %s', job.id, failure.phase, failure.category,
                            failure.message)
             result = JobResult(None, failure, durations=run.durations(self._monotonic()))
+        if self._abandoned.is_set():
+            logger.warning('Job %s was abandoned at shutdown; restart recovery will repeat it', job.id)
+            return
         store.finish_job(job.id, result)
         logger.info('Job %s ended: %s', job.id, result.outcome or 'failed')
         self._set_activity(ActivityName.IDLE, None)
@@ -350,6 +371,8 @@ class Worker:
             self._monotonic,
         )
         self._enter(store, run, Phase.PUBLICATION, ActivityName.PUBLISHING)
+        # The share may have changed during inference, so containment and the media are checked again.
+        paths = resolve_job_paths(self._root, relative)
         published = publish_srt(paths, result.srt_text, self._publication_checkpoint)
         outcome = Outcome.TRANSCRIBED if published else Outcome.EXISTING
         return JobResult(outcome, srt_path=srt_path, durations=run.durations(self._monotonic()))
@@ -357,8 +380,9 @@ class Worker:
     def _load(self, store: Store, run: _JobRun) -> TranscriptionModel:
         """Return the job's model, loading its profile only if it is not resident (DESIGN 5.3, M25).
 
-        The resident model is dropped before another is loaded, so two models never coexist. A
-        failed load leaves no model resident.
+        Before another profile loads, the worker drops every reference to the resident model and
+        asks its adapter to release what it holds, so two models never coexist. A failed load
+        leaves no model resident.
 
         Raises:
             UnknownProfileError: If the deployment no longer configures the job's profile or its engine.
@@ -373,12 +397,23 @@ class Worker:
             adapter = self._adapters.get(profile.engine)
             if adapter is None:
                 raise UnknownProfileError(f'The deployment has no adapter for the engine {profile.engine!r}')
-            self._resident = None
+            resident = None  # this frame must not keep the old model alive during the load
+            self._release_resident()
             logger.info('Loading the model of profile %s', profile.name)
-            resident = (profile.name, adapter.load(profile))
+            resident = (profile.name, profile.engine, adapter.load(profile))
             self._resident = resident
         self._enter(store, run, Phase.TRANSCRIPTION, ActivityName.TRANSCRIBING)
-        return resident[1]
+        return resident[2]
+
+    def _release_resident(self) -> None:
+        """Drop the resident model and let its adapter release what the engine library still holds."""
+        resident, self._resident = self._resident, None
+        if resident is None:
+            return
+        engine = resident[1]
+        del resident
+        # A model became resident through this adapter, and the map of adapters never changes.
+        self._adapters[engine].release()
 
     def _enter(self, store: Store, run: _JobRun, phase: Phase, activity: ActivityName) -> None:
         """Record that the job enters a phase, then publish the matching activity.

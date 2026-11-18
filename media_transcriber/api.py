@@ -26,6 +26,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from media_transcriber import faster_whisper_adapter, mlx_whisper_adapter
+from media_transcriber.audio import kill_decoders
 from media_transcriber.config import Settings
 from media_transcriber.engine import EngineAdapter
 from media_transcriber.languages import is_well_formed
@@ -211,13 +212,18 @@ class _Runtime:
     def stop(self) -> None:
         """Ask the worker to stop, wait up to the shutdown grace for it, then close the API's database thread.
 
-        The grace bounds waiting, not execution. A worker still busy when it ends is abandoned and
-        keeps running until the process exits, and restart recovery requeues its job (DESIGN 5.9).
+        The grace bounds waiting, not execution. A worker still busy when it ends is abandoned: it
+        records nothing more, its ffmpeg decoder is killed so that none outlives the process, and
+        inference that cannot be interrupted runs on until the process exits. Restart recovery
+        requeues the job (DESIGN 5.9).
         """
         self.worker.stop()
         self.worker_thread.join(self.settings.shutdown_grace)
         if self.worker_thread.is_alive():
-            logger.warning('%s did not stop within the shutdown grace; abandoning it', self.worker_thread.name)
+            self.worker.abandon()
+            killed = kill_decoders()
+            logger.warning('%s did not stop within the shutdown grace; abandoning it and killing %d decoders',
+                           self.worker_thread.name, killed)
         try:
             self._executor.submit(self._close_api_store).result()
         finally:
@@ -347,7 +353,8 @@ def create_app(
         database_error = None
         try:
             await asyncio.wait_for(rt.db(lambda store: store.check()), _DATABASE_CHECK_SECONDS)
-        except (sqlite3.Error, TimeoutError) as error:
+        except (sqlite3.Error, RuntimeError, TimeoutError) as error:
+            # RuntimeError: opening the API's store found another schema version.
             database_error = str(error) or type(error).__name__
         worker = rt.worker
         check, activity = worker.staging_check, worker.activity

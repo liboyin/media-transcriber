@@ -5,6 +5,7 @@ and against test-owned storage. A test's SIGKILL stands in for a supervisor's fa
 launchd or Docker.
 """
 
+import ctypes
 import http.client
 import json
 import os
@@ -24,6 +25,8 @@ import network_guard
 import numpy as np
 import pytest
 import service_process
+import uvicorn
+from fastapi import FastAPI
 
 import media_transcriber.__main__ as testee
 from media_transcriber.config import SettingsError
@@ -46,7 +49,23 @@ def test_main_serves_one_process_with_the_configured_address(tmp_path: Path) -> 
     assert app.title == 'media-transcriber'
     assert (options['host'], options['port']) == ('127.0.0.1', 9123)
     assert options['timeout_graceful_shutdown'] == testee.REQUEST_SHUTDOWN_SECONDS
-    assert 'workers' not in options  # one process: the worker and its resident model are in-process
+    assert options['workers'] == 1  # one process: the worker and its resident model are in-process
+
+
+def test_an_inherited_web_concurrency_still_runs_one_process(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`WEB_CONCURRENCY` in the environment does not turn the service into several processes or stop it."""
+    started: list[int] = []
+
+    def run(server: uvicorn.Server) -> None:
+        started.append(server.config.workers)
+        server.started = True  # uvicorn exits with status 3 after a server that never started
+
+    monkeypatch.setenv('WEB_CONCURRENCY', '2')
+    monkeypatch.setattr(testee, 'create_app', lambda settings: FastAPI())
+    monkeypatch.setattr(uvicorn.Server, 'run', run)
+    with patch.object(testee.logging, 'basicConfig'):
+        testee.main({**REQUIRED, 'TRANSCRIBER_STAGING_DIR': str(tmp_path), 'TRANSCRIBER_HOST': '127.0.0.1'})
+    assert started == [1]
 
 
 def test_main_fails_without_settings() -> None:
@@ -289,3 +308,78 @@ def test_a_failed_worker_ends_the_process_with_status_1(lifecycle: Lifecycle) ->
     output = service.output()
     assert 'The worker cannot continue' in output and 'Exiting with status 1' in output
     assert 'Application shutdown complete' not in output
+
+
+PR_SET_CHILD_SUBREAPER = 36
+PR_GET_CHILD_SUBREAPER = 37
+
+
+def decoder_ended(pid: int) -> bool:
+    """Return whether a decoder has ended: reaped by the service, or adopted here and ended by a signal.
+
+    Raises:
+        AssertionError: If an adopted decoder exited by itself, which the stand-in never does in time.
+    """
+    try:
+        reaped, status = os.waitpid(pid, os.WNOHANG)
+    except ChildProcessError:
+        return True  # not our child: the service reaped it before exiting
+    if reaped == 0:
+        return False
+    assert os.WIFSIGNALED(status) and os.WTERMSIG(status) == signal.SIGKILL, status
+    return True
+
+
+@pytest.mark.skipif(not sys.platform.startswith('linux'), reason='needs Linux to adopt orphaned processes')
+def test_a_decoder_blocked_past_the_grace_does_not_outlive_the_service(
+    lifecycle: Lifecycle, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Shutdown kills an abandoned decoder, so none overlaps with the next process (DESIGN 5.9).
+
+    A stand-in `ffmpeg` on the service's PATH blocks without output, like a decoder on a stalled share. The
+    test process becomes a child subreaper, so the decoder orphaned by the service's exit is adopted and
+    reaped here, and its exit status shows whether the service killed it.
+    """
+    prctl = ctypes.CDLL(None, use_errno=True).prctl
+    previous = ctypes.c_int()
+    assert prctl(PR_GET_CHILD_SUBREAPER, ctypes.byref(previous), 0, 0, 0) == 0
+    assert prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) == 0
+    started, release = lifecycle.flag('decoder-pid'), lifecycle.flag('release-decoder')
+    bin_dir = lifecycle.tmp_path / 'bin'
+    bin_dir.mkdir()
+    decoder = bin_dir / 'ffmpeg'
+    decoder.write_text(
+        f'#!{sys.executable}\n'
+        'import os, time\nfrom pathlib import Path\n'
+        f'started, release = Path({str(started)!r}), Path({str(release)!r})\n'
+        "started.with_suffix('.tmp').write_text(str(os.getpid()))\n"
+        "started.with_suffix('.tmp').replace(started)\n"
+        f'deadline = time.monotonic() + {3 * WAIT_SECONDS}\n'  # outlives every wait below
+        'while time.monotonic() < deadline and not release.exists():\n'
+        '    time.sleep(0.01)\n'
+    )
+    decoder.chmod(0o700)
+    monkeypatch.setenv('PATH', f'{bin_dir}{os.pathsep}{os.environ["PATH"]}')
+    try:
+        service = lifecycle.start(grace='0.05')
+        job_id = service.submit('clip.wav')
+        wait_until(started.exists, 'the stand-in decoder to start')
+        assert service.job(job_id)['phase'] == 'decoding'
+        pid = int(started.read_text())
+        service.terminate()
+        assert_stopped_gracefully(service, service.wait_exit())
+        # The service is gone. Either it reaped the killed decoder itself, or the decoder is now this
+        # process's child; an unkilled decoder would outlive every wait here.
+        wait_until(lambda: decoder_ended(pid), 'the decoder to end')
+    finally:
+        release.touch()
+        lifecycle.close()
+        deadline = time.monotonic() + WAIT_SECONDS
+        while True:  # reap any adopted process, so that none outlives the test
+            try:
+                if os.waitpid(-1, os.WNOHANG) == (0, 0):
+                    assert time.monotonic() < deadline, 'an adopted process did not exit'
+                    time.sleep(0.01)
+            except ChildProcessError:
+                break
+        assert prctl(PR_SET_CHILD_SUBREAPER, previous.value, 0, 0, 0) == 0

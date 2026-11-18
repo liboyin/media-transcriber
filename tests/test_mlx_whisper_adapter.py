@@ -235,3 +235,22 @@ def test_accelerator_available_is_false_without_mlx(tmp_path: Path, monkeypatch:
     monkeypatch.setitem(sys.modules, 'mlx', None)
     monkeypatch.setitem(sys.modules, 'mlx.core', None)
     assert testee.MlxWhisperAdapter(tmp_path).accelerator_available() is False
+
+
+def test_release_drops_the_held_model(tmp_path: Path, snapshot: Path, fake_mlx: FakeMlx) -> None:
+    """Release empties `ModelHolder`, so the model leaves memory, and the released model refuses to transcribe."""
+    adapter = testee.MlxWhisperAdapter(tmp_path)
+    model = adapter.load(testee.BASELINE_PROFILE)
+
+    adapter.release()
+
+    assert (fake_mlx.holder.model, fake_mlx.holder.model_path) == (None, None)
+    with pytest.raises(RuntimeError, match='no longer loaded'):
+        model.transcribe(np.zeros(16000, dtype=np.float32), 'en')
+
+
+def test_release_without_mlx_does_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Where mlx-whisper is not installed there is nothing to release, and release does not raise."""
+    monkeypatch.setitem(sys.modules, 'mlx_whisper', None)
+    monkeypatch.setitem(sys.modules, 'mlx_whisper.transcribe', None)
+    testee.MlxWhisperAdapter(tmp_path).release()

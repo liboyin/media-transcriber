@@ -102,6 +102,19 @@ class MlxWhisperAdapter:
             return False
         return mx.metal.is_available()
 
+    def release(self) -> None:
+        """Drop the model that mlx-whisper's global `ModelHolder` keeps.
+
+        Without this, the MLX model stays in memory after the worker switches to a profile of another
+        engine. A model that this adapter returned earlier then refuses to transcribe.
+        """
+        try:
+            from mlx_whisper.transcribe import ModelHolder
+        except ImportError:
+            return
+        ModelHolder.model = None
+        ModelHolder.model_path = None
+
     def load(self, profile: Profile) -> MlxWhisperModel:
         """Load a profile's model from the weights directory into `ModelHolder`, without any download.
 

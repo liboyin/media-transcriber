@@ -30,7 +30,8 @@ def main(environ: Mapping[str, str] = os.environ) -> None:
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
     settings = Settings.from_environ(environ)
     uvicorn.run(
-        create_app(settings), host=settings.host, port=settings.port,
+        # workers=1 overrides an inherited WEB_CONCURRENCY, which would make uvicorn refuse an app instance.
+        create_app(settings), host=settings.host, port=settings.port, workers=1,
         timeout_graceful_shutdown=REQUEST_SHUTDOWN_SECONDS, log_config=None,
     )
 

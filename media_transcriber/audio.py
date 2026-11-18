@@ -15,7 +15,7 @@ import numpy as np
 
 from media_transcriber.engine import Waveform
 
-__all__ = ['SAMPLE_RATE', 'DecodingError', 'EmptyAudioError', 'decode_waveform']
+__all__ = ['SAMPLE_RATE', 'DecodingError', 'EmptyAudioError', 'decode_waveform', 'kill_decoders']
 
 SAMPLE_RATE = 16_000
 """Samples per second of every decoded waveform: Whisper's input rate."""
@@ -25,6 +25,27 @@ CHUNK_BYTES = 1 << 20
 
 STDERR_TAIL_BYTES = 8 << 10
 """How much of ffmpeg's standard error to keep for the error message."""
+
+_running: set[subprocess.Popen[bytes]] = set()
+"""The ffmpeg children that `decode_waveform` calls in this process currently own."""
+_running_lock = threading.Lock()
+
+
+def kill_decoders() -> int:
+    """Kill every running ffmpeg child, for a shutdown that abandons the worker (DESIGN 5.9).
+
+    A decoder blocked on a stalled share would otherwise outlive the service and overlap with the
+    next process. The call that owns each child still reaps it and closes its pipes, if it ever
+    resumes. Safe to call from any thread.
+
+    Returns:
+        How many children were killed.
+    """
+    with _running_lock:
+        processes = list(_running)
+    for process in processes:
+        process.kill()
+    return len(processes)
 
 
 class DecodingError(RuntimeError):
@@ -103,6 +124,8 @@ def decode_waveform(path: Path, checkpoint: Callable[[], None] = _no_checkpoint)
     stdout, stderr = process.stdout, process.stderr
     assert stdout is not None and stderr is not None  # both are pipes, as requested above
     drainer = threading.Thread(target=_drain, args=(stderr, stderr_tail), name='ffmpeg-stderr')
+    with _running_lock:
+        _running.add(process)
     try:
         drainer.start()
         for chunk in iter(lambda: stdout.read(CHUNK_BYTES), b''):
@@ -121,6 +144,8 @@ def decode_waveform(path: Path, checkpoint: Callable[[], None] = _no_checkpoint)
             drainer.join()
         stdout.close()
         stderr.close()
+        with _running_lock:
+            _running.discard(process)
     if returncode != 0:
         raise DecodingError(path, returncode, stderr_tail.decode(errors='replace'))
     # A whole number of 16-bit samples is expected; a stray odd byte cannot form a sample.

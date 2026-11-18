@@ -188,8 +188,9 @@ def publish_srt(paths: JobPaths, text: str, checkpoint: Callable[[], None] = _no
         paths: The job's paths.
         text: The complete SRT text.
         checkpoint: Called before anything is written, between chunks of text, and once more
-            immediately before the link. The worker passes the marker check (DESIGN 5.10, M18).
-            An exception that it raises stops publication and propagates unchanged.
+            before the last check of the media, immediately before the link. The worker passes
+            the marker check (DESIGN 5.10, M18). An exception that it raises stops publication
+            and propagates unchanged.
 
     Returns:
         True if the SRT was published. False if a file appeared at the SRT path during the job and
@@ -218,6 +219,8 @@ def publish_srt(paths: JobPaths, text: str, checkpoint: Callable[[], None] = _no
                     checkpoint()
                 writer.write(text[start:start + WRITE_CHUNK_CHARS])
                 writer.flush()
-        # The last check comes after the text is complete and immediately before the link.
+        # The last checks come after the text is complete and immediately before the link (M20).
         checkpoint()
+        if not paths.media.is_file():
+            raise MediaNotFoundError(f'The media file disappeared before its SRT was published: {paths.media}')
     return staged.published is not None

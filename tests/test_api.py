@@ -332,6 +332,14 @@ def test_health_reports_a_database_that_cannot_be_written(api: Api) -> None:
     assert body['database'] == {'ok': False, 'error': 'database is locked'}
 
 
+def test_health_reports_a_database_with_another_schema_version(api: Api) -> None:
+    """A store that cannot open because of a schema mismatch is a 503 with its error, not a 500."""
+    with patch.object(Store, 'check', side_effect=RuntimeError('schema version 9, expected 1')):
+        status, body = api.health()
+    assert status == 503
+    assert body['database'] == {'ok': False, 'error': 'schema version 9, expected 1'}
+
+
 def test_health_reports_a_database_check_that_does_not_finish(api: Api) -> None:
     """A database check that outlasts its bound is unhealthy instead of stalling the response."""
     with patch.object(testee, '_DATABASE_CHECK_SECONDS', 0.0):
@@ -463,20 +471,27 @@ def test_the_default_exit_ends_the_process_at_once(process_exits: ProcessExits) 
 
 
 def test_shutdown_abandons_a_job_that_outlasts_the_grace(harness: Harness, caplog: pytest.LogCaptureFixture) -> None:
-    """Shutdown waits only the grace for the current job, then abandons it to restart recovery (DESIGN 5.9)."""
+    """After the grace, shutdown kills decoders and abandons the job, which records nothing more (DESIGN 5.9)."""
     harness.settings = replace(harness.settings, shutdown_grace=0.05)
     entered, release = threading.Event(), threading.Event()
     harness.adapter.model.on_transcribe.append(lambda: (entered.set(), release.wait(WAIT_SECONDS)))
     app = testee.create_app(harness.settings, harness.components)
+    kills: list[int] = []
     try:
-        with TestClient(app) as client:
+        with patch.object(testee, 'kill_decoders', lambda: kills.append(1) or 0), TestClient(app) as client:
             thread = app.state.runtime.worker_thread
             response = client.post('/jobs', json={'path': harness.media(), 'language': 'en'})
             assert response.status_code == 202
             assert entered.wait(WAIT_SECONDS)
         assert 'did not stop within the shutdown grace' in caplog.text
+        assert kills == [1]
         assert thread.is_alive()
     finally:
         release.set()
     thread.join(WAIT_SECONDS)
     assert not thread.is_alive()
+    # The job finished after it was abandoned, but nothing was recorded: recovery will repeat it.
+    assert (harness.root / 'video.srt').exists()
+    with Store(harness.settings.database, lambda: 0.0) as store:
+        job = store.get_job(str(response.json()['id']))
+    assert job is not None and (job['state'], job['failure']) == ('running', None)

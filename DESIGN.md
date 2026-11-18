@@ -437,7 +437,7 @@ This section records the modules as tasks build them. It describes the current c
 | Module | Responsibility | Task |
 |---|---|---|
 | `media_transcriber/engine.py` | `Segment`, `Profile`, and the `EngineAdapter` and `TranscriptionModel` protocols that every engine implements (section 8) | T3 |
-| `media_transcriber/audio.py` | Decoding with an ffmpeg child process into a mono 16 kHz float32 waveform, read in chunks with a checkpoint between them (5.5 step 4, M18) | T3 |
+| `media_transcriber/audio.py` | Decoding with an ffmpeg child process into a mono 16 kHz float32 waveform, read in chunks with a checkpoint between them (5.5 step 4, M18). It tracks its running children, so that a shutdown can kill a decoder that it abandons (5.9) | T3, T7 |
 | `media_transcriber/rejection.py` | Whole-run rejection of known bad phrases (5.5 step 7) | T3 |
 | `media_transcriber/srt.py` | SRT serialization, with cues of identical text merged (5.6, M19) | T3 |
 | `media_transcriber/pipeline.py` | `run_pipeline`: decoding, the model load through a loader, transcription, rejection and serialization. It returns the text and the stage timings, and never touches staging. The worker and the benchmark share it (5.5, 7.3, M25) | T3, T7 |
@@ -460,6 +460,8 @@ Each adapter also reports whether its accelerator is available: faster-whisper a
 
 Staging is separate from the pipeline. The worker calls `require_marker`, `resolve_job_paths` and `srt_exists` before the pipeline, and `publish_srt` after it. The marker check is the checkpoint of both decoding and publication. During decoding it runs at most once per interval, and during publication at every call.
 
-The worker records each phase in the store before it enters it, and records the outcome or the failure in one write when the job ends. Every store error ends the worker, also one raised inside the loader, so a broken database never becomes a job failure. The worker publishes its activity and its last marker check as immutable values, which `/health` reads from another thread without touching the share.
+The worker records each phase in the store before it enters it, and records the outcome or the failure in one write when the job ends. Before publication it resolves the job's paths again, because the share may have changed during inference. `publish_srt` checks the media once more immediately before the link (M20). Before another profile loads, the worker drops the resident model and calls its adapter's `release`, which empties mlx-whisper's global `ModelHolder` (5.3). Every store error ends the worker, also one raised inside the loader, so a broken database never becomes a job failure. The worker publishes its activity and its last marker check as immutable values, which `/health` reads from another thread without touching the share.
+
+When the shutdown grace ends with a job still running, the API abandons the worker, which then records nothing more, and kills the running ffmpeg children, so that no decoder outlives the process. Restart recovery repeats the job (5.9).
 
 The API never touches the share. A submission is checked syntactically, stored, and the worker is woken. `/health` reads the database through the API's store thread, and the worker's activity and marker check from memory. Its accelerator results come from one check per engine at startup.

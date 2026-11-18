@@ -1,10 +1,13 @@
 """Tests for the worker, with real staging and ffmpeg on synthetic audio, and fake engines (DESIGN 5.5, 5.9-5.11)."""
 
+import gc
 import logging
 import sqlite3
 import threading
 import wave
+import weakref
 from collections.abc import Callable, Iterator
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
@@ -645,3 +648,116 @@ def test_a_store_that_cannot_open_is_fatal(service: Service) -> None:
     [error] = service.fatal
     assert isinstance(error, sqlite3.OperationalError)
     assert worker.failed
+
+
+# Review findings on residency, publication, stopping and abandonment
+
+
+class FreshModelAdapter(FakeAdapter):
+    """An adapter that loads a new model object on every load, and records the order of loads and releases."""
+
+    def __init__(self, name: str, events: list[str]) -> None:
+        """Share an event log with other adapters."""
+        super().__init__(name=name)
+        self.events = events
+        self.models: list[weakref.ref[FakeModel]] = []
+
+    def load(self, profile: Profile) -> FakeModel:
+        """Record whether any earlier model is still alive, then return a new one."""
+        gc.collect()
+        alive = [ref for ref in self.models + getattr(self, 'peer_models', []) if ref() is not None]
+        self.events.append(f'load {profile.name} with {len(alive)} earlier models alive')
+        model = FakeModel(SEGMENTS)
+        self.models.append(weakref.ref(model))
+        return model
+
+    def release(self) -> None:
+        """Record the release."""
+        self.events.append(f'release {self.name}')
+
+
+def test_no_earlier_model_is_alive_while_another_profile_loads(service: Service) -> None:
+    """Switching profiles, even across engines, drops and releases the old model before loading (DESIGN 5.3)."""
+    events: list[str] = []
+    first, second = FreshModelAdapter('fake', events), FreshModelAdapter('other', events)
+    first.peer_models = second.models  # type: ignore[attr-defined]
+    second.peer_models = first.models  # type: ignore[attr-defined]
+    other = Profile(name='r', engine='other', model='org/r', revision='r3', precision='float32')
+    worker = service.make_worker(profiles={PROFILE.name: PROFILE, OTHER_PROFILE.name: OTHER_PROFILE, 'r': other},
+                                 adapters={'fake': first, 'other': second})
+    for name, profile in [('one.wav', 'p'), ('two.wav', 'q'), ('three.wav', 'r')]:
+        service.submit(service.media(name), profile=profile)
+        worker.step(service.store)
+
+    assert events == [
+        'load p with 0 earlier models alive',
+        'release fake', 'load q with 0 earlier models alive',
+        'release fake', 'load r with 0 earlier models alive',
+    ]
+
+
+def test_a_stop_while_the_queue_is_read_starts_no_job(service: Service, tmp_path: Path) -> None:
+    """A job selected after shutdown began stays queued for the next start (DESIGN 5.9)."""
+    job_id = service.submit(service.media())
+    worker = service.make_worker()
+
+    class StoppingStore(Store):
+        def next_job(self) -> QueuedJob | None:
+            job = super().next_job()
+            worker.stop()
+            return job
+
+    with closing(StoppingStore(service.db_path, lambda: 1_000_000.0)) as store:
+        assert worker.step(store) is testee.Step.IDLE
+
+    assert service.job(job_id)['state'] == 'queued'
+    assert service.adapter.loads == []
+
+
+def test_a_symlink_that_appears_at_the_srt_path_during_inference_is_refused(service: Service, tmp_path: Path) -> None:
+    """Containment is checked again before publication, so nothing is written outside the root (DESIGN 5.2)."""
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    job_id = service.submit(service.media())
+    service.model.on_transcribe.append(lambda: (service.root / 'video.srt').symlink_to(outside / 'video.srt'))
+
+    service.worker.step(service.store)
+
+    assert service.failure(job_id) == ('publication', 'filesystem')
+    assert list(outside.iterdir()) == []
+
+
+def test_an_abandoned_job_records_nothing(service: Service) -> None:
+    """Once abandoned at shutdown, the job's late result is not recorded; recovery will repeat it (DESIGN 5.9)."""
+    job_id = service.submit(service.media())
+    service.model.on_transcribe.append(service.worker.abandon)
+
+    service.worker.step(service.store)
+
+    job = service.job(job_id)
+    assert (job['state'], job['failure']) == ('running', None)
+    assert service.store.list_failures() == []
+
+
+def test_a_decoding_failure_with_the_marker_gone_fails_filesystem(service: Service) -> None:
+    """When the share vanished before the first chunk reached a marker check, the failure is `filesystem`."""
+    job_id = service.submit(service.media())
+
+    def unmounted(*args: object) -> object:
+        service.marker.unlink()
+        raise DecodingError(Path('video.wav'), 1, 'No such file or directory')
+
+    with patch.object(testee, 'run_pipeline', unmounted):
+        service.worker.step(service.store)
+
+    assert service.failure(job_id) == ('decoding', 'filesystem')
+    failure = service.job(job_id)['failure']
+    assert isinstance(failure, dict) and 'staging marker was missing' in str(failure['message'])
+
+
+def test_a_decoding_failure_with_the_marker_present_stays_decoding(service: Service) -> None:
+    """With the share in place, an undecodable file remains a `decoding` failure."""
+    job_id = service.submit(service.media())
+    with patch.object(testee, 'run_pipeline', side_effect=DecodingError(Path('v'), 1, 'invalid data')):
+        service.worker.step(service.store)
+    assert service.failure(job_id) == ('decoding', 'decoding')

@@ -132,6 +132,7 @@ PROFILE = '[[profiles]]\nname = "a"\nengine = "faster-whisper"\nmodel = "m"\nrev
     (PROFILE + 'decoding = { beams = [1, 2] }\n', '`decoding`'),
     (PROFILE + PROFILE, 'twice'),
     ('default = "b"\n' + PROFILE, "default 'b'"),
+    ('default = ["a"]\n' + PROFILE, "default \\['a'\\]"),
 ])
 def test_load_profiles_rejects_a_malformed_file(tmp_path: Path, text: str, message: str) -> None:
     """Every malformed file fails at startup with a message that names the problem and the file."""
