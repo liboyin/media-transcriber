@@ -48,6 +48,7 @@ class FakeMlx:
     holder: type
     segments: list[dict[str, object]] = field(default_factory=list)
     loads: list[tuple[str, FakeDtype]] = field(default_factory=list)
+    metal: bool = True
     transcriptions: list[dict[str, object]] = field(default_factory=list)
 
 
@@ -76,7 +77,9 @@ def fake_mlx(monkeypatch: pytest.MonkeyPatch) -> FakeMlx:
 
     state = FakeMlx(FakeModelHolder)
     core = types.ModuleType('mlx.core')
-    vars(core).update(float16=FLOAT16, float32=FLOAT32)
+    metal = types.ModuleType('mlx.core.metal')
+    vars(metal).update(is_available=lambda: state.metal)
+    vars(core).update(float16=FLOAT16, float32=FLOAT32, metal=metal)
     mlx = types.ModuleType('mlx')
     vars(mlx).update(core=core)
     transcribe_module = types.ModuleType('mlx_whisper.transcribe')
@@ -217,3 +220,18 @@ def test_transcribe_refuses_a_model_that_a_later_load_replaced(
         earlier.transcribe(np.zeros(16000, dtype=np.float32), 'en')
 
     assert fake_mlx.transcriptions == []
+
+
+@pytest.mark.parametrize('available', [True, False])
+def test_accelerator_available_reports_metal(tmp_path: Path, fake_mlx: FakeMlx, available: bool) -> None:
+    """The accelerator check asks MLX whether Metal is available, without loading a model."""
+    fake_mlx.metal = available
+    assert testee.MlxWhisperAdapter(tmp_path).accelerator_available() is available
+    assert fake_mlx.loads == []
+
+
+def test_accelerator_available_is_false_without_mlx(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Where MLX is not installed, as on Linux, the accelerator is reported unavailable instead of raising."""
+    monkeypatch.setitem(sys.modules, 'mlx', None)
+    monkeypatch.setitem(sys.modules, 'mlx.core', None)
+    assert testee.MlxWhisperAdapter(tmp_path).accelerator_available() is False

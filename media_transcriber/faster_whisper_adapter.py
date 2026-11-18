@@ -79,6 +79,12 @@ class FasterWhisperAdapter:
         """Map a BCP 47 tag to its Whisper code, or None if Whisper does not support it."""
         return whisper_language(tag)
 
+    def accelerator_available(self) -> bool:
+        """Return whether CTranslate2 sees at least one CUDA device."""
+        import ctranslate2
+
+        return ctranslate2.get_cuda_device_count() > 0
+
     def load(self, profile: Profile) -> FasterWhisperModel:
         """Load a profile's model on the GPU from the weights directory, without any download.
 

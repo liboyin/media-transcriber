@@ -9,12 +9,13 @@ Transcribe media on a shared staging area into SRT subtitles, as a LAN-only HTTP
 **Status:**
 
 - The governance framework, the devcontainer and the gates are in place ([T1](tasks/closed/T1.md)).
-- The engine interface, the transcription pipeline ([T3](tasks/closed/T3.md)), the staging layer ([T6](tasks/closed/T6.md)), and the faster-whisper ([T4](tasks/closed/T4.md)) and MLX Whisper ([T5](tasks/closed/T5.md)) adapters exist. No service runs yet. [tasks/TODO.md](tasks/TODO.md) gives the order of the work.
+- The engine interface, the transcription pipeline ([T3](tasks/closed/T3.md)), the staging layer ([T6](tasks/closed/T6.md)), and the faster-whisper ([T4](tasks/closed/T4.md)) and MLX Whisper ([T5](tasks/closed/T5.md)) adapters exist.
+- The job store and the worker ([T7](tasks/open/T7.md)), and the HTTP API with its entry point ([T8](tasks/open/T8.md)), exist. The service has not yet run against the real share or a real accelerator, and no deployment exists yet. [tasks/TODO.md](tasks/TODO.md) gives the order of the work.
 - The CUDA machine is not available yet (DESIGN decision M15).
 
 ## Security / trust model
 
-The service will be unauthenticated and intended for a trusted LAN only. Do not expose it to the public internet. [DESIGN section 9](DESIGN.md#9-deployment-and-development-environment) describes the deployment.
+The service is unauthenticated and intended for a trusted LAN only. Do not expose it to the public internet. [DESIGN section 9](DESIGN.md#9-deployment-and-development-environment) describes the deployment.
 
 ## Dev Container (recommended)
 
@@ -52,11 +53,55 @@ Sign in with `codex login` before you use the direct CLI review. [The review ski
 
 ## Configuration
 
-Settings arrive with the HTTP API, [T8](tasks/open/T8.md).
+The service reads its settings from the environment when it starts. An empty variable takes its default. An invalid value stops the service with a message that names the variable.
+
+| Variable | Meaning | Default |
+|---|---|---|
+| `TRANSCRIBER_STAGING_DIR` | The staging root, which holds the marker `.media-transcriber-root` | required |
+| `TRANSCRIBER_DATABASE` | The SQLite file. Never put it on the share | required |
+| `TRANSCRIBER_WEIGHTS_DIR` | The weights directory, laid out as a Hugging Face cache (DESIGN M22) | required |
+| `TRANSCRIBER_PROFILES_FILE` | The TOML file of engine profiles | the platform's baseline profile |
+| `TRANSCRIBER_HOST` | The address that the server binds | `0.0.0.0` |
+| `TRANSCRIBER_PORT` | The TCP port | `8000` |
+| `TRANSCRIBER_JOB_RETENTION_DAYS` | How long a finished job stays readable | `7` |
+| `TRANSCRIBER_SHUTDOWN_GRACE` | Seconds that shutdown waits for the current job | `30` |
+
+**The profiles file** (DESIGN M24) lists each profile in a `[[profiles]]` table. `default` names the profile that a request without one runs, and the first profile is the default without it. `decoding` is optional. Without the file, the service offers the baseline of its platform: `mlx-whisper-large-v3` on macOS and `faster-whisper-large-v3` elsewhere.
+
+```toml
+default = "mlx-whisper-large-v3"
+
+[[profiles]]
+name = "mlx-whisper-large-v3"
+engine = "mlx-whisper"
+model = "mlx-community/whisper-large-v3-mlx"
+revision = "49e6aa286ad60c14352c404340ded53710378a11"
+precision = "float16"
+```
+
+The service never downloads weights. Download each profile's model and revision into the weights directory on the host first, with `hf download <model> --revision <revision> --cache-dir <weights>`. A download is a host check (DESIGN section 9).
+
+These values are implementation defaults, not settings:
+
+- `/health` calls a marker check stale after 120 seconds, but only while the worker is idle or touches the share.
+- The worker checks the marker every 30 seconds while idle, every 5 seconds while paused, and at most every 10 seconds during decoding.
+- A failed worker ends the process with status 1 after 60 seconds, for the supervisor to restart it.
+- uvicorn gives open requests 5 seconds after SIGTERM.
+- Recovery fails a job at its third interruption.
 
 ## Running the service
 
-The CUDA deployment is [T10](tasks/open/T10.md), and the Mac deployment is [T11](tasks/open/T11.md).
+Run one process from the repository's environment:
+
+```sh
+TRANSCRIBER_STAGING_DIR=/path/to/staging TRANSCRIBER_DATABASE=/path/to/transcriber.sqlite3 \
+TRANSCRIBER_WEIGHTS_DIR=/path/to/weights python3 -m media_transcriber
+```
+
+- Never run it against the real share from the devcontainer. A run against the real share is a host check.
+- FastAPI publishes the request and response schemas at `/docs`.
+- `/health` returns 503 until the worker's first marker check, and while the marker is missing.
+- The CUDA deployment is [T10](tasks/open/T10.md), and the Mac deployment is [T11](tasks/open/T11.md).
 
 ## Updating dependencies
 

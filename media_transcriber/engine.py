@@ -96,6 +96,13 @@ class EngineAdapter(Protocol):
         """
         ...
 
+    def accelerator_available(self) -> bool:
+        """Return whether the accelerator that the engine needs is usable, such as CUDA or Metal (DESIGN 5.11).
+
+        The check loads no model and never touches the network or the share.
+        """
+        ...
+
     def load(self, profile: Profile) -> TranscriptionModel:
         """Load the model that a profile names.
 

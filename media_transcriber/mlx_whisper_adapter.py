@@ -91,6 +91,17 @@ class MlxWhisperAdapter:
         """Map a BCP 47 tag to its Whisper code, or None if Whisper does not support it."""
         return whisper_language(tag)
 
+    def accelerator_available(self) -> bool:
+        """Return whether MLX is installed and its Metal back end is available.
+
+        MLX is installed only on macOS, so elsewhere the answer is False rather than an error.
+        """
+        try:
+            import mlx.core as mx
+        except ImportError:
+            return False
+        return mx.metal.is_available()
+
     def load(self, profile: Profile) -> MlxWhisperModel:
         """Load a profile's model from the weights directory into `ModelHolder`, without any download.
 

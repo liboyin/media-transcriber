@@ -157,3 +157,14 @@ def test_transcribe_passes_the_language_and_maps_segments_lazily(tmp_path: Path,
     assert next(segments) == Segment(0.0, 1.5, ' hello')
     assert len(produced) == 1
     assert list(segments) == [Segment(1.5, 3.0, 'world ')]
+
+
+@pytest.mark.parametrize(('devices', 'available'), [(0, False), (1, True), (2, True)])
+def test_accelerator_available_asks_ctranslate2_for_cuda_devices(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, devices: int, available: bool,
+) -> None:
+    """The accelerator is available when CTranslate2 sees at least one CUDA device."""
+    import ctranslate2
+
+    monkeypatch.setattr(ctranslate2, 'get_cuda_device_count', lambda: devices)
+    assert testee.FasterWhisperAdapter(tmp_path).accelerator_available() is available

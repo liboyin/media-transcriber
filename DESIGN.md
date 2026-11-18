@@ -448,11 +448,18 @@ This section records the modules as tasks build them. It describes the current c
 | `media_transcriber/mlx_whisper_adapter.py` | The MLX Whisper adapter for macOS, and the `float16` baseline profile (section 8, M13, M23). It loads through mlx-whisper's `ModelHolder`, which `transcribe` always reads, and imports MLX only when it loads or transcribes | T5 |
 | `media_transcriber/store.py` | The SQLite store of jobs and failures: one connection per thread and one `BEGIN IMMEDIATE` transaction per write, retention in the submission's transaction, supersession by a `done` job, and recovery with the interruption cap (5.7 to 5.9) | T7 |
 | `media_transcriber/worker.py` | The worker thread: the marker pause, one job at a time through staging and `run_pipeline`, the resident model, failure categories, the fatal callback, and the activity and marker check that `/health` reads (5.3, 5.5, 5.8 to 5.11, M17, M18) | T7 |
+| `media_transcriber/config.py` | Settings from `TRANSCRIBER_`-prefixed environment variables, and the TOML profiles file or the platform's baseline. The only module that reads the environment (5.3, M24) | T8 |
+| `media_transcriber/languages.py` | The syntactic BCP 47 check of a request's language (5.4) | T8 |
+| `media_transcriber/responses.py` | The response models that publish every field in the OpenAPI document (section 6) | T8 |
+| `media_transcriber/api.py` | The FastAPI app and the service's composition: every endpoint of section 6, the lifespan that starts and stops the worker within the shutdown grace, store calls on one dedicated thread, health from the worker's published values and a startup check of each engine's accelerator, and the process exit after the worker fails (5.1, 5.3, 5.8, 5.9, 5.11) | T8 |
+| `media_transcriber/__main__.py` | `python3 -m media_transcriber`: one uvicorn process (section 9) | T8 |
 
 Dataflow of one transcription: `run_pipeline` calls `decode_waveform`, then the loader, then the model's `transcribe`. It consumes every segment through `reject_bad_segments` and then calls `segments_to_srt`. ffmpeg runs as a subprocess, not through `ffmpeg-python`, because the decoder needs chunked reads and owns the child's lifecycle.
 
-Each adapter resolves its weights through `resolve_weights` and passes the engine library only the local snapshot directory, because both libraries download whenever they get a repository name. `stubs/` holds narrow type stubs for the engine libraries, which ship none.
+Each adapter also reports whether its accelerator is available: faster-whisper asks CTranslate2 for a CUDA device, and MLX asks whether Metal is available. Each adapter resolves its weights through `resolve_weights` and passes the engine library only the local snapshot directory, because both libraries download whenever they get a repository name. `stubs/` holds narrow type stubs for the engine libraries, which ship none.
 
 Staging is separate from the pipeline. The worker calls `require_marker`, `resolve_job_paths` and `srt_exists` before the pipeline, and `publish_srt` after it. The marker check is the checkpoint of both decoding and publication. During decoding it runs at most once per interval, and during publication at every call.
 
 The worker records each phase in the store before it enters it, and records the outcome or the failure in one write when the job ends. Every store error ends the worker, also one raised inside the loader, so a broken database never becomes a job failure. The worker publishes its activity and its last marker check as immutable values, which `/health` reads from another thread without touching the share.
+
+The API never touches the share. A submission is checked syntactically, stored, and the worker is woken. `/health` reads the database through the API's store thread, and the worker's activity and marker check from memory. Its accelerator results come from one check per engine at startup.
