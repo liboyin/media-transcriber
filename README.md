@@ -10,7 +10,7 @@ Transcribe media on a shared staging area into SRT subtitles, as a LAN-only HTTP
 
 - The governance framework, the devcontainer and the gates are in place ([T1](tasks/closed/T1.md)).
 - The engine interface, the transcription pipeline ([T3](tasks/closed/T3.md)), the staging layer ([T6](tasks/closed/T6.md)), and the faster-whisper ([T4](tasks/closed/T4.md)) and MLX Whisper ([T5](tasks/closed/T5.md)) adapters exist.
-- The job store and the worker ([T7](tasks/open/T7.md)), and the HTTP API with its entry point ([T8](tasks/open/T8.md)), exist. The service has not yet run against the real share or a real accelerator, and no deployment exists yet. [tasks/TODO.md](tasks/TODO.md) gives the order of the work.
+- The job store and the worker ([T7](tasks/closed/T7.md)), and the HTTP API with its entry point ([T8](tasks/closed/T8.md)), exist. The service has not yet run against the real share or a real accelerator, and no deployment exists yet. [tasks/TODO.md](tasks/TODO.md) gives the order of the work.
 - The CUDA machine is not available yet (DESIGN decision M15).
 
 ## Security / trust model
