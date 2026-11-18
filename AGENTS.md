@@ -224,6 +224,7 @@ A host check runs outside the devcontainer's isolation. It can write into the sh
 # Version Control
 
 - Keep functionally independent changes in separate, self-contained commits. Commit a change once it is implemented, validated and documented.
+- Before a work branch merges, squash review fixes that only supersede one another into one commit. Keep fixes that are functionally independent separate. Do this before you write the completion record, so that the record cites the commits that remain.
 - If a rewrite changes a commit that a committed file cites by hash, update the citation in the same rewrite.
 - Honor a request to leave a draft uncommitted.
 - Stage explicit paths. NEVER use `git add -A` or `git commit -a`.

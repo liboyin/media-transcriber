@@ -25,10 +25,10 @@ If a follow-up change is cosmetic, or you want to reuse earlier gate results or 
 - Replace the reviewer only for unrelated work, a substantial redesign or an unavailable reviewer. Record the reason, and transfer the open findings and dispositions.
 - Compaction or a new user turn alone is not a reason to replace the reviewer.
 
-How to start the reviewer depends on the main agent:
+The `dispatch` object of `agent-workflow.json` names the reviewer's `model` and `effort`. Both ways of starting the reviewer use those values, unless the user selects otherwise. How to start it depends on the main agent:
 
-- **Codex:** use `spawn_agent` with `fork_turns: "none"`, `model: "gpt-6.2-sol"` and `reasoning_effort: "high"`, unless the user selects otherwise. Continue the recorded reviewer with `followup_task`.
-- **Claude Code:** run `../agent-workflow-common/tools/dispatch.py` from the repository root. It writes the prompt, starts or resumes the Codex CLI, and prints the session ID and the report. Its `--help` text lists the arguments.
+- **Codex:** use `spawn_agent` with `fork_turns: "none"`, and pass the configured model as `model` and the effort as `reasoning_effort`. Continue the recorded reviewer with `followup_task`.
+- **Claude Code:** run `../agent-workflow-common/tools/dispatch.py` from the repository root. It reads the same configuration, writes the prompt, starts or resumes the Codex CLI, and prints the session ID and the report. Its `--help` text lists the arguments.
 
 If the requested model or dispatch path is unavailable:
 

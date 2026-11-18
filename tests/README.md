@@ -53,7 +53,7 @@ Shared fixtures live in `conftest.py` files:
 - Start background threads with the `owned_threads` fixture, and loopback servers with `loopback_server`. Both are in `tests/conftest.py`.
 - The teardown of these fixtures stops and joins everything within a bound, also after a failure. This includes a server's request handlers. The teardown fails the test if anything survives.
 - If a fixture cannot own a thread, stop and join the thread in a `finally`, and assert that it is not alive. A thread that the application's own lifespan starts is an example.
-- No test starts a real service process yet. The HTTP API task (T8) adds a fixture for one, with a teardown that kills and reaps every child.
+- `tests/test_main.py` starts real service processes through `tests/service_process.py`, with a fake engine and the network guard. Its `lifecycle` fixture kills and reaps every child at teardown, also after a failure.
 - A shared asynchronous resource or a process-global double needs five things: ownership by one test, synchronized access, cancellation, quiescence, and local accounting for late work.
 - These guarantees hold after timeouts and failures too. A completion signal alone does not prove that callbacks or background work have stopped.
 
