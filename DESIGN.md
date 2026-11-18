@@ -405,6 +405,13 @@ Decisions made by the user when T4 and T5 were bounded, on 2026-11-17:
 | M22 | The weights directory has the layout of a Hugging Face cache. An adapter finds a profile's weights offline from its model and revision, at `models--<org>--<name>/snapshots/<revision>/`. The path enforces the revision pin. Both libraries download whenever they get a name that is not a local directory, so an adapter passes them only the resolved directory. This affects T4, T5, T8, T10, T11 and T2. |
 | M23 | The MLX baseline profile runs full `large-v3` in `float16`, mlx-whisper's default. That is the precision of T2's smoke test on the M2 Mac. The CUDA baseline stays `float32`. Choosing each platform's default profile remains a benchmark decision (M5). This affects T5. |
 
+Decisions made by the user when T7 and T8 were bounded, on 2026-11-18:
+
+| ID | Decision |
+|---|---|
+| M24 | A deployment configures its profiles in a TOML file that `TRANSCRIBER_PROFILES_FILE` names. The file lists each profile's engine, model, revision, precision and decoding settings, and may name the default. Without the setting, the deployment offers its platform's baseline profile: MLX Whisper on macOS, and faster-whisper elsewhere. This affects T8, T10 and T11. |
+| M25 | `run_pipeline` takes a model loader instead of a loaded model. It calls the loader after decoding and before transcription, which keeps the order of 5.5 steps 4 and 5. The worker loads the profile's model only if it is not resident. The benchmark passes a loader that returns its resident model. The worker and the benchmark therefore still share one function (7.3). This affects T7 and T9. |
+
 ## 14. Open questions
 
 | ID | Question |
