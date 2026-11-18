@@ -15,7 +15,9 @@ import numpy as np
 
 from media_transcriber.engine import Waveform
 
-__all__ = ['SAMPLE_RATE', 'DecodingError', 'EmptyAudioError', 'decode_waveform', 'kill_decoders']
+__all__ = [
+    'SAMPLE_RATE', 'DecodingError', 'DecodingStoppedError', 'EmptyAudioError', 'decode_waveform', 'kill_decoders',
+]
 
 SAMPLE_RATE = 16_000
 """Samples per second of every decoded waveform: Whisper's input rate."""
@@ -29,19 +31,28 @@ STDERR_TAIL_BYTES = 8 << 10
 _running: set[subprocess.Popen[bytes]] = set()
 """The ffmpeg children that `decode_waveform` calls in this process currently own."""
 _running_lock = threading.Lock()
+_accepting = True
+"""Whether `decode_waveform` may start ffmpeg. `kill_decoders` ends it for the rest of the process."""
+
+
+class DecodingStoppedError(RuntimeError):
+    """The process is shutting down, so no new decoder may start (DESIGN 5.9)."""
 
 
 def kill_decoders() -> int:
-    """Kill every running ffmpeg child, for a shutdown that abandons the worker (DESIGN 5.9).
+    """Kill every running ffmpeg child, and refuse new ones, for a shutdown that abandons the worker (DESIGN 5.9).
 
     A decoder blocked on a stalled share would otherwise outlive the service and overlap with the
-    next process. The call that owns each child still reaps it and closes its pipes, if it ever
-    resumes. Safe to call from any thread.
+    next process. Starting ffmpeg and registering it happen under the same lock as this scan, so a
+    decoder that a resumed worker tries to start afterwards never starts. The call that owns each
+    killed child still reaps it and closes its pipes, if it ever resumes. Safe to call from any thread.
 
     Returns:
         How many children were killed.
     """
+    global _accepting
     with _running_lock:
+        _accepting = False
         processes = list(_running)
     for process in processes:
         process.kill()
@@ -115,17 +126,20 @@ def decode_waveform(path: Path, checkpoint: Callable[[], None] = _no_checkpoint)
             audio stream.
         EmptyAudioError: If ffmpeg succeeds but produces no samples.
         OSError: If ffmpeg cannot be started.
+        DecodingStoppedError: If `kill_decoders` has run in this process.
     """
     pcm = bytearray()
     stderr_tail = bytearray()
-    process = subprocess.Popen(
-        _ffmpeg_command(path), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-    )
+    with _running_lock:
+        if not _accepting:
+            raise DecodingStoppedError(f'The process is shutting down; not decoding {path}')
+        process = subprocess.Popen(
+            _ffmpeg_command(path), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        _running.add(process)
     stdout, stderr = process.stdout, process.stderr
     assert stdout is not None and stderr is not None  # both are pipes, as requested above
     drainer = threading.Thread(target=_drain, args=(stderr, stderr_tail), name='ffmpeg-stderr')
-    with _running_lock:
-        _running.add(process)
     try:
         drainer.start()
         for chunk in iter(lambda: stdout.read(CHUNK_BYTES), b''):

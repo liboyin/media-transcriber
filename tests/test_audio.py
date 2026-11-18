@@ -176,6 +176,7 @@ def test_kill_decoders_ends_a_running_decoder_and_forgets_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, children: list[RecordingPopen],
 ) -> None:
     """A shutdown's kill reaches the running ffmpeg child, which is still reaped by its own call (DESIGN 5.9)."""
+    monkeypatch.setattr(testee, '_accepting', True)  # the kill closes the registry; restored after the test
     monkeypatch.setattr(testee, 'CHUNK_BYTES', 1000)
     clip = write_wav(tmp_path / 'long.wav', [0] * (10 * testee.SAMPLE_RATE))
     kills: list[int] = []
@@ -191,6 +192,19 @@ def test_kill_decoders_ends_a_running_decoder_and_forgets_it(
     assert raised.value.returncode < 0  # ended by the kill, not by finishing
     assert_reaped(children)
     assert testee.kill_decoders() == 0  # a finished decoder is no longer tracked
+
+
+def test_no_decoder_starts_after_kill_decoders(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, children: list[RecordingPopen],
+) -> None:
+    """A worker that resumes after the shutdown's kill cannot start a decoder that would outlive the process."""
+    monkeypatch.setattr(testee, '_accepting', True)  # restored after the test
+    assert testee.kill_decoders() == 0
+
+    with pytest.raises(testee.DecodingStoppedError):
+        testee.decode_waveform(write_wav(tmp_path / 'clip.wav', [0] * 100))
+
+    assert children == []
 
 
 def test_drain_keeps_only_the_tail_of_the_stream() -> None:

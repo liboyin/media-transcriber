@@ -441,8 +441,9 @@ def test_decoding_checks_the_marker_only_once_the_interval_has_passed(service: S
         service.submit(service.media('two.wav', samples=16000 * 70))
         service.make_worker(marker_check_interval=0.0).step(service.store)
 
-    # The step's own check, then publication's checks: before writing and before linking.
-    assert relaxed == 3
+    # The step's own check, the check before publication resolves the paths again, then publication's
+    # checks: before writing and before linking.
+    assert relaxed == 4
     assert len(checks) == relaxed + 3  # plus one check after each of the three decoded chunks
 
 
@@ -458,6 +459,28 @@ def test_a_marker_that_disappears_before_publication_publishes_nothing(service: 
     assert stage_entries(service.root) == []
     check = service.worker.staging_check
     assert check is not None and not check.marker_present
+
+
+def test_a_marker_that_disappears_during_publication_publishes_nothing(service: Service) -> None:
+    """Publication's own checkpoints check the marker, after the checks that precede it (DESIGN 5.10)."""
+    job_id = service.submit(service.media())
+    real_resolve = testee.resolve_job_paths
+    calls: list[object] = []
+
+    def resolve_then_unmount_on_the_second_call(root: Path, relative: object) -> object:
+        paths = real_resolve(root, relative)  # type: ignore[arg-type]
+        calls.append(relative)
+        if len(calls) == 2:  # the resolution that immediately precedes publication
+            service.marker.unlink()
+        return paths
+
+    with patch.object(testee, 'resolve_job_paths', resolve_then_unmount_on_the_second_call):
+        service.worker.step(service.store)
+
+    assert len(calls) == 2
+    assert service.failure(job_id) == ('publication', 'filesystem')
+    assert not (service.root / 'video.srt').exists()
+    assert stage_entries(service.root) == []
 
 
 # Activity and progress
@@ -728,13 +751,15 @@ def test_a_symlink_that_appears_at_the_srt_path_during_inference_is_refused(serv
 
 
 def test_an_abandoned_job_records_nothing(service: Service) -> None:
-    """Once abandoned at shutdown, the job's late result is not recorded; recovery will repeat it (DESIGN 5.9)."""
+    """Inference that returns after abandonment publishes nothing and records nothing (DESIGN 5.9)."""
     job_id = service.submit(service.media())
     service.model.on_transcribe.append(service.worker.abandon)
 
     service.worker.step(service.store)
 
+    assert not (service.root / 'video.srt').exists()
     job = service.job(job_id)
+    assert job['phase'] == 'transcription'  # it never entered publication
     assert (job['state'], job['failure']) == ('running', None)
     assert service.store.list_failures() == []
 
@@ -761,3 +786,41 @@ def test_a_decoding_failure_with_the_marker_present_stays_decoding(service: Serv
     with patch.object(testee, 'run_pipeline', side_effect=DecodingError(Path('v'), 1, 'invalid data')):
         service.worker.step(service.store)
     assert service.failure(job_id) == ('decoding', 'decoding')
+
+
+@pytest.mark.parametrize('at', ['decoding', 'loading'])
+def test_an_abandoned_job_stops_at_its_next_step(service: Service, at: str) -> None:
+    """Abandonment during decoding stops before the load, and during a load before transcription.
+
+    During decoding, shutdown also kills the decoder; here decoding finishes, and the load is refused.
+    """
+    job_id = service.submit(service.media())
+    if at == 'decoding':
+        worker = service.make_worker(marker_check_interval=0.0)
+        real_resolve = testee.resolve_job_paths
+
+        def resolve_then_abandon(root: Path, relative: object) -> object:
+            paths = real_resolve(root, relative)  # type: ignore[arg-type]
+            worker.abandon()
+            return paths
+
+        with patch.object(testee, 'resolve_job_paths', resolve_then_abandon):
+            worker.step(service.store)
+        assert service.adapter.loads == []
+    else:
+        worker = service.make_worker()
+        service.adapter.on_load.append(worker.abandon)
+        worker.step(service.store)
+        assert service.model.calls == []
+    job = service.job(job_id)
+    assert (job['state'], job['failure']) == ('running', None)
+
+
+def test_share_loss_during_inference_fails_filesystem_not_missing(service: Service) -> None:
+    """With the marker and the media gone after inference, the share is reported lost (DESIGN 5.10)."""
+    job_id = service.submit(service.media())
+    service.model.on_transcribe.append(lambda: (service.marker.unlink(), (service.root / 'video.wav').unlink()))
+
+    service.worker.step(service.store)
+
+    assert service.failure(job_id) == ('publication', 'filesystem')

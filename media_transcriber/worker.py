@@ -132,6 +132,10 @@ class UnknownProfileError(LookupError):
     """A queued job names a profile or an engine that the deployment no longer configures."""
 
 
+class _Abandoned(Exception):
+    """Stops a job that shutdown abandoned. Its result is never recorded."""
+
+
 class _StoreFault(Exception):
     """Carries a store error raised while a job runs, so that it ends the worker instead of failing the job."""
 
@@ -229,6 +233,8 @@ class Worker:
         self._paused = False
         self._resident: tuple[str, str, TranscriptionModel] | None = None
         """The resident profile's name, its engine, and its loaded model."""
+        self._resident_name: str | None = None
+        """The resident profile's name alone, for readers on other threads, which never touch the model."""
         self._staging_check: StagingCheck | None = None
         now = monotonic()
         self._activity = Activity(ActivityName.IDLE, None, now, now)
@@ -254,8 +260,7 @@ class Worker:
     @property
     def resident_profile(self) -> str | None:
         """The name of the profile whose model is resident, or None. Safe to read from any thread."""
-        resident = self._resident
-        return None if resident is None else resident[0]
+        return self._resident_name
 
     def wake(self) -> None:
         """Wake the worker early, for example after a submission. Safe to call from any thread."""
@@ -270,8 +275,9 @@ class Worker:
         """Give up the current job after the shutdown grace, so that restart recovery repeats it (DESIGN 5.9).
 
         The worker stops taking jobs and records nothing more for the current one, which stays
-        `running`. The caller may then kill the job's decoder, whose failure must not be recorded
-        as the job's outcome. Safe to call from any thread.
+        `running`. It stops before its model load, before transcription and before or during
+        publication, so late inference never publishes. The caller may then kill the job's decoder, whose failure is not
+        recorded either. Safe to call from any thread.
         """
         self._abandoned.set()
         self.stop()
@@ -370,8 +376,11 @@ class Worker:
             paths.media, lambda: self._load(store, run), run.job.engine_language, self._decoding_checkpoint,
             self._monotonic,
         )
+        self._require_not_abandoned()
         self._enter(store, run, Phase.PUBLICATION, ActivityName.PUBLISHING)
-        # The share may have changed during inference, so containment and the media are checked again.
+        # The share may have changed during inference: first the marker, so that a vanished share
+        # fails as `filesystem`, then containment and the media.
+        self._require_marker()
         paths = resolve_job_paths(self._root, relative)
         published = publish_srt(paths, result.srt_text, self._publication_checkpoint)
         outcome = Outcome.TRANSCRIBED if published else Outcome.EXISTING
@@ -388,6 +397,7 @@ class Worker:
             UnknownProfileError: If the deployment no longer configures the job's profile or its engine.
             Exception: Whatever the adapter raises while loading.
         """
+        self._require_not_abandoned()
         self._enter(store, run, Phase.MODEL, ActivityName.LOADING)
         resident = self._resident
         if resident is None or resident[0] != run.job.profile:
@@ -401,13 +411,14 @@ class Worker:
             self._release_resident()
             logger.info('Loading the model of profile %s', profile.name)
             resident = (profile.name, profile.engine, adapter.load(profile))
-            self._resident = resident
+            self._resident, self._resident_name = resident, profile.name
+        self._require_not_abandoned()
         self._enter(store, run, Phase.TRANSCRIPTION, ActivityName.TRANSCRIBING)
         return resident[2]
 
     def _release_resident(self) -> None:
         """Drop the resident model and let its adapter release what the engine library still holds."""
-        resident, self._resident = self._resident, None
+        resident, self._resident, self._resident_name = self._resident, None, None
         if resident is None:
             return
         engine = resident[1]
@@ -446,7 +457,17 @@ class Worker:
             StagingUnavailableError: If the marker is missing, so nothing is published.
         """
         self._progress()
+        self._require_not_abandoned()
         self._require_marker()
+
+    def _require_not_abandoned(self) -> None:
+        """Stop a job that shutdown abandoned, before it does more work (DESIGN 5.9).
+
+        Raises:
+            _Abandoned: If `abandon` has been called.
+        """
+        if self._abandoned.is_set():
+            raise _Abandoned('The job was abandoned at shutdown')
 
     def _require_marker(self) -> None:
         """Check the marker and raise if it is missing.

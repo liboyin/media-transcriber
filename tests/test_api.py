@@ -490,8 +490,8 @@ def test_shutdown_abandons_a_job_that_outlasts_the_grace(harness: Harness, caplo
         release.set()
     thread.join(WAIT_SECONDS)
     assert not thread.is_alive()
-    # The job finished after it was abandoned, but nothing was recorded: recovery will repeat it.
-    assert (harness.root / 'video.srt').exists()
+    # The late inference stopped before publication, and nothing was recorded: recovery will repeat it.
+    assert not (harness.root / 'video.srt').exists()
     with Store(harness.settings.database, lambda: 0.0) as store:
         job = store.get_job(str(response.json()['id']))
     assert job is not None and (job['state'], job['failure']) == ('running', None)
