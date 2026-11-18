@@ -77,7 +77,7 @@ class ProcessExits:
 def process_exits() -> Iterator[ProcessExits]:
     """Refuse ``os._exit`` in each test, then fail it if any exit was attempted.
 
-    The service's fatal exit (DESIGN 5.9) will call ``os._exit``, which would end the whole test run without a
+    The service's fatal exit (DESIGN 5.9) calls ``os._exit``, which would end the whole test run without a
     report. The refusal raises at the attempt, but code under test may swallow that error, so the record
     decides. A child process does not load this guard and exits for real.
     """
