@@ -35,6 +35,9 @@ from pathlib import Path, PurePosixPath
 _PLUGIN_NAME = 'review_provenance'
 _PROVENANCE_MARK = 'ACTUAL_IMPORT_PROVENANCE'
 _DETAIL_MARK = 'FAILURE_DETAIL '
+# Results come from pytest's reports through the plugin, never from its output: captured logs and prints can
+# contain any line, including one that looks like `ERROR tests/x.py::t`.
+_RESULT_MARK = 'TEST_RESULT '
 # Fixed so that a run can be reproduced from its evidence.
 _RANDOM_SEED = 20261108
 _PLUGIN = '''"""Verify that no module came from the original repository, and record why each test failed."""
@@ -46,17 +49,34 @@ from pathlib import Path
 import pytest
 
 _DETAILS = []
+_RESULTS = []
 
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
-    """Record each test failure, marking broken code as non-behavioral."""
+    """Record why each test failed, marking broken code as non-behavioral."""
     outcome = yield
     report = outcome.get_result()
     if report.failed and call.excinfo is not None:
         broken = isinstance(call.excinfo.value, (SyntaxError, ImportError, NameError))
         kind = 'NON_BEHAVIORAL' if broken else 'BEHAVIORAL'
         _DETAILS.append(f'{kind} {item.nodeid}: {call.excinfo.exconly()[:300]!r}')
+
+
+def pytest_runtest_logreport(report):
+    """Record each failed phase as FAILED (the test body) or ERROR (setup or teardown).
+
+    This hook sees each report as pytest logs it, after every makereport wrapper, including a project's own,
+    has had its say on the outcome.
+    """
+    if report.failed:
+        _RESULTS.append(f'{"FAILED" if report.when == "call" else "ERROR"} {report.nodeid}')
+
+
+def pytest_collectreport(report):
+    """Record a collection failure as ERROR."""
+    if report.failed:
+        _RESULTS.append(f'ERROR {report.nodeid}')
 
 
 def pytest_sessionfinish(session, exitstatus):
@@ -75,7 +95,7 @@ def pytest_sessionfinish(session, exitstatus):
         raise pytest.UsageError(f'Import escaped scratch: {escaped}')
     alive = [thread.name for thread in threading.enumerate() if thread is not threading.main_thread()]
     copied = sum(file.is_relative_to(root) for file in files.values())
-    lines = [*(f'FAILURE_DETAIL {detail}' for detail in _DETAILS)]
+    lines = [*(f'TEST_RESULT {result}' for result in _RESULTS), *(f'FAILURE_DETAIL {detail}' for detail in _DETAILS)]
     lines.append(f'ACTUAL_IMPORT_PROVENANCE scratch={root} modules={copied} threads={alive}')
     Path(os.environ['MUTATE_REPORT']).write_text('\\n'.join(lines) + '\\n', encoding='utf-8')
 '''
@@ -241,7 +261,7 @@ def run_tests(tree: Path, owned: Path, plugin: Path, repo: Path, tests: list[str
     marks = [line for line in evidence if line.startswith(_PROVENANCE_MARK)]
     return Run(
         done.returncode, outcomes[-1] if outcomes else '\n'.join(lines[-3:]), marks[-1] if marks else None,
-        tuple(line for line in lines if line.startswith(('FAILED', 'ERROR'))),
+        tuple(line[len(_RESULT_MARK):] for line in evidence if line.startswith(_RESULT_MARK)),
         tuple(line[len(_DETAIL_MARK):] for line in evidence if line.startswith(_DETAIL_MARK)),
     )
 

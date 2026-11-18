@@ -188,6 +188,7 @@ def test_mutate_counts_a_collection_error_as_invalid(tmp_path, repo):
     assert status == 1
     assert '[INVALID]' in text
     assert 'advice: ' in text
+    assert 'ERROR tests/test_calc.py' in text  # the evidence names what failed to collect
 
 
 @pytest.mark.parametrize(('run', 'expected'), [
@@ -394,6 +395,92 @@ def test_mutate_counts_broken_code_in_a_test_body_as_invalid(tmp_path, repo):
     assert status == 1
     assert '[INVALID]' in text
     assert 'NON_BEHAVIORAL tests/test_calc.py::test_add' in text
+
+
+def test_mutate_kills_a_mutant_whose_failing_test_logged_an_error(tmp_path, repo):
+    """Captured output decides nothing, even lines that look exactly like pytest's ERROR summary."""
+    (repo / 'tests/test_calc.py').write_text('''import logging
+
+from media_transcriber.calc import add
+
+
+def test_add():
+    """Log and print expected errors, as code under test may, then check the result."""
+    logging.getLogger('calc').error('an expected error\\nERROR tests/test_calc.py::test_add - a continuation line')
+    print('ERROR tests/test_calc.py::test_add - printed output')
+    assert add(1, 2) == 3
+''', encoding='utf-8')
+    status, evidence = run_batch(tmp_path, repo, ('M1', 'adds', CALC, 'a + b', 'a - b', TESTS))
+    text = evidence.read_text(encoding='utf-8')
+    assert '[KILLED]' in text, text
+    assert status == 0
+
+
+def test_mutate_counts_a_teardown_error_beside_a_kill_as_invalid(tmp_path, repo):
+    """A failed teardown's ERROR summary still invalidates a run whose test failed through its assertion."""
+    (repo / 'tests/test_calc.py').write_text('''import pytest
+
+from media_transcriber.calc import add
+
+
+@pytest.fixture
+def broken_teardown():
+    """Fail after the test under the mutant, as a check for a leaked resource would."""
+    yield
+    if add(1, 2) != 3:
+        raise RuntimeError('teardown failed')
+
+
+def test_add(broken_teardown):
+    """Check the result."""
+    assert add(1, 2) == 3
+''', encoding='utf-8')
+    status, evidence = run_batch(tmp_path, repo, ('M1', 'adds', CALC, 'a + b', 'a - b', TESTS))
+    text = evidence.read_text(encoding='utf-8')
+    assert '[INVALID]' in text, text
+    assert 'ERROR tests/test_calc.py::test_add' in text
+    assert status == 1
+
+
+def test_mutate_takes_the_outcome_that_a_project_hook_gives_a_report(tmp_path, repo):
+    """A project's makereport wrapper that turns a skipped setup into an error still invalidates the run."""
+    (repo / 'tests/conftest.py').write_text('''import pytest
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Treat a skipped mandatory fixture as an error, as some projects do."""
+    outcome = yield
+    report = outcome.get_result()
+    if report.when == 'setup' and report.skipped:
+        report.outcome = 'failed'
+''', encoding='utf-8')
+    (repo / 'tests/test_calc.py').write_text('''import pytest
+
+from media_transcriber.calc import add
+
+
+@pytest.fixture
+def mandatory():
+    """Skip under the mutant, which the project's hook turns into a setup error."""
+    if add(1, 2) != 3:
+        pytest.skip('the dependency is unavailable')
+
+
+def test_add():
+    """Check the result."""
+    assert add(1, 2) == 3
+
+
+def test_with_the_fixture(mandatory):
+    """Need the fixture."""
+''', encoding='utf-8')
+    git(repo, 'add', 'tests/conftest.py')  # the copy holds tracked files only
+    status, evidence = run_batch(tmp_path, repo, ('M1', 'adds', CALC, 'a + b', 'a - b', TESTS))
+    text = evidence.read_text(encoding='utf-8')
+    assert '[INVALID]' in text, text
+    assert 'ERROR tests/test_calc.py::test_with_the_fixture' in text
+    assert status == 1
 
 
 def test_mutate_counts_a_timeout_as_invalid(tmp_path, repo):
