@@ -174,7 +174,10 @@ def srt_exists(paths: JobPaths) -> bool:
     return OverwritePolicy.NEVER.resolve(paths.srt) is None
 
 
-def publish_srt(paths: JobPaths, text: str, checkpoint: Callable[[], None] = _no_checkpoint) -> bool:
+def publish_srt(
+    paths: JobPaths, text: str, checkpoint: Callable[[], None] = _no_checkpoint,
+    before_link: Callable[[], None] = _no_checkpoint,
+) -> bool:
     """Publish complete SRT text atomically beside its media, never replacing a file (DESIGN 5.6).
 
     The text is written as UTF-8, without newline translation, into a fresh hidden `.staging-*`
@@ -191,6 +194,9 @@ def publish_srt(paths: JobPaths, text: str, checkpoint: Callable[[], None] = _no
             before the last check of the media, immediately before the link. The worker passes
             the marker check (DESIGN 5.10, M18). An exception that it raises stops publication
             and propagates unchanged.
+        before_link: Called after the last check of the media, as the very last step before the
+            link. The worker passes its in-memory check for an abandoned job (DESIGN 5.9). An
+            exception that it raises stops publication and propagates unchanged.
 
     Returns:
         True if the SRT was published. False if a file appeared at the SRT path during the job and
@@ -223,4 +229,5 @@ def publish_srt(paths: JobPaths, text: str, checkpoint: Callable[[], None] = _no
         checkpoint()
         if not paths.media.is_file():
             raise MediaNotFoundError(f'The media file disappeared before its SRT was published: {paths.media}')
+        before_link()
     return staged.published is not None

@@ -49,6 +49,9 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
+ABANDON_WAIT_SECONDS = 5.0
+"""How long `abandon` waits for a link already in progress. Longer means the link is stalled on the share."""
+
 
 class ActivityName(StrEnum):
     """What the worker is doing (DESIGN 5.11)."""
@@ -240,6 +243,10 @@ class Worker:
         self._activity = Activity(ActivityName.IDLE, None, now, now)
         self._stopping = threading.Event()
         self._abandoned = threading.Event()
+        # Held from the last abandonment check before a link until publication returns, so that
+        # abandonment and the link are ordered. Only the worker thread sets `_link_locked`.
+        self._publication_lock = threading.Lock()
+        self._link_locked = False
         self._wakeup = threading.Event()
 
     @property
@@ -275,11 +282,22 @@ class Worker:
         """Give up the current job after the shutdown grace, so that restart recovery repeats it (DESIGN 5.9).
 
         The worker stops taking jobs and records nothing more for the current one, which stays
-        `running`. It stops before its model load, before transcription and before or during
-        publication, so late inference never publishes. The caller may then kill the job's decoder, whose failure is not
-        recorded either. Safe to call from any thread.
+        `running`. It stops before its model load, before transcription, and before or during
+        publication, so late inference does not publish. The caller may then kill the job's
+        decoder, whose failure is not recorded either. Safe to call from any thread.
+
+        A link already in progress finishes first. The job may then already be recorded `done`, or
+        it stays `running` and recovery ends it `existing`. Once this returns, the process publishes
+        nothing more, unless the wait of `ABANDON_WAIT_SECONDS` expired because the link stalled on
+        the share. That publication may still finish later, and recovery then also ends the job
+        `existing`.
         """
-        self._abandoned.set()
+        acquired = self._publication_lock.acquire(timeout=ABANDON_WAIT_SECONDS)
+        try:
+            self._abandoned.set()
+        finally:
+            if acquired:
+                self._publication_lock.release()
         self.stop()
 
     def run(self) -> None:
@@ -382,7 +400,12 @@ class Worker:
         # fails as `filesystem`, then containment and the media.
         self._require_marker()
         paths = resolve_job_paths(self._root, relative)
-        published = publish_srt(paths, result.srt_text, self._publication_checkpoint)
+        try:
+            published = publish_srt(paths, result.srt_text, self._publication_checkpoint, self._lock_for_link)
+        except BaseException:
+            self._unlock_after_link()
+            raise
+        self._unlock_after_link()
         outcome = Outcome.TRANSCRIBED if published else Outcome.EXISTING
         return JobResult(outcome, srt_path=srt_path, durations=run.durations(self._monotonic()))
 
@@ -399,6 +422,7 @@ class Worker:
         """
         self._require_not_abandoned()
         self._enter(store, run, Phase.MODEL, ActivityName.LOADING)
+        self._require_not_abandoned()  # again: the phase write can wait on SQLite through a shutdown
         resident = self._resident
         if resident is None or resident[0] != run.job.profile:
             profile = self._profiles.get(run.job.profile)
@@ -459,6 +483,27 @@ class Worker:
         self._progress()
         self._require_not_abandoned()
         self._require_marker()
+
+    def _lock_for_link(self) -> None:
+        """Take the publication lock for the link, unless the job was abandoned (DESIGN 5.9).
+
+        `publish_srt` calls this as the last step before the link. The worker releases the lock
+        once publication returns.
+
+        Raises:
+            _Abandoned: If `abandon` has been called. The lock is then not held.
+        """
+        self._publication_lock.acquire()
+        if self._abandoned.is_set():
+            self._publication_lock.release()
+            raise _Abandoned('The job was abandoned at shutdown')
+        self._link_locked = True
+
+    def _unlock_after_link(self) -> None:
+        """Release the publication lock if `_lock_for_link` took it; a publication that failed earlier did not."""
+        if self._link_locked:
+            self._link_locked = False
+            self._publication_lock.release()
 
     def _require_not_abandoned(self) -> None:
         """Stop a job that shutdown abandoned, before it does more work (DESIGN 5.9).

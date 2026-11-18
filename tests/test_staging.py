@@ -3,6 +3,7 @@
 import errno
 import os
 from pathlib import Path, PurePosixPath
+from unittest.mock import patch
 
 import pytest
 from pathlib_extensions import NotAFileError
@@ -356,6 +357,33 @@ def test_publish_srt_refuses_media_that_disappears_at_the_last_checkpoint(root: 
         testee.publish_srt(paths, 'text', checkpoint)
 
     assert len(calls) == 2
+    assert not (root / 'show' / 'episode.srt').exists()
+    assert stage_dirs(root / 'show') == []
+
+
+def test_publish_srt_calls_before_link_last_and_honors_its_refusal(root: Path) -> None:
+    """`before_link` runs after every checkpoint and the last media check; raising there publishes nothing."""
+    paths = job(root)
+    events: list[str] = []
+
+    class Refused(Exception):
+        """The hook's deliberate refusal."""
+
+    real_is_file = Path.is_file
+
+    def is_file(path: Path) -> bool:
+        if path == paths.media:
+            events.append('media')
+        return real_is_file(path)
+
+    def before_link() -> None:
+        events.append('before_link')
+        raise Refused
+
+    with patch.object(Path, 'is_file', is_file), pytest.raises(Refused):
+        testee.publish_srt(paths, 'text', lambda: events.append('checkpoint'), before_link)
+
+    assert events[-3:] == ['checkpoint', 'media', 'before_link']
     assert not (root / 'show' / 'episode.srt').exists()
     assert stage_dirs(root / 'show') == []
 

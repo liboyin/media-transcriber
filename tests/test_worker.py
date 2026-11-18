@@ -493,11 +493,11 @@ def test_the_activity_follows_the_job_and_reports_progress(service: Service) -> 
     service.model.on_transcribe.append(lambda: seen.append(service.worker.activity))
     real_publish = testee.publish_srt
 
-    def spy_publish(paths: object, text: str, checkpoint: Callable[[], None]) -> bool:
+    def spy_publish(paths: object, text: str, checkpoint: Callable[[], None], before_link: Callable[[], None]) -> bool:
         seen.append(service.worker.activity)
         checkpoint()
         seen.append(service.worker.activity)
-        return real_publish(paths, text, checkpoint)  # type: ignore[arg-type]
+        return real_publish(paths, text, checkpoint, before_link)  # type: ignore[arg-type]
 
     job_id = service.submit(service.media())
     with patch.object(testee, 'publish_srt', spy_publish):
@@ -807,6 +807,7 @@ def test_an_abandoned_job_stops_at_its_next_step(service: Service, at: str) -> N
         with patch.object(testee, 'resolve_job_paths', resolve_then_abandon):
             worker.step(service.store)
         assert service.adapter.loads == []
+        assert service.job(job_id)['phase'] == 'decoding'  # it never entered the model phase
     else:
         worker = service.make_worker()
         service.adapter.on_load.append(worker.abandon)
@@ -824,3 +825,91 @@ def test_share_loss_during_inference_fails_filesystem_not_missing(service: Servi
     service.worker.step(service.store)
 
     assert service.failure(job_id) == ('publication', 'filesystem')
+
+
+def test_abandonment_during_the_last_check_before_the_link_publishes_nothing(service: Service) -> None:
+    """The in-memory abandonment check is the very last step before the link (DESIGN 5.9)."""
+    job_id = service.submit(service.media())
+    real_require = testee.require_marker
+    calls: list[Path] = []
+
+    def require_then_abandon_on_the_last(root: Path) -> None:
+        real_require(root)
+        calls.append(root)
+        # The step's check, the check before publication, then publication's first and last checkpoints.
+        if len(calls) == 4:
+            service.worker.abandon()
+
+    with patch.object(testee, 'require_marker', require_then_abandon_on_the_last):
+        service.worker.step(service.store)
+
+    assert len(calls) == 4
+    assert not (service.root / 'video.srt').exists()
+    assert stage_entries(service.root) == []
+    job = service.job(job_id)
+    assert (job['state'], job['failure']) == ('running', None)
+
+
+def test_abandonment_while_the_model_phase_is_written_loads_nothing(service: Service) -> None:
+    """A job abandoned while its phase write waited on the database starts no model load (DESIGN 5.9)."""
+    job_id = service.submit(service.media())
+    worker = service.make_worker()
+
+    class AbandoningStore(Store):
+        def set_phase(self, job_id: str, phase: Phase) -> None:
+            super().set_phase(job_id, phase)
+            if phase is Phase.MODEL:
+                worker.abandon()
+
+    with closing(AbandoningStore(service.db_path, lambda: 1_000_000.0)) as store:
+        worker.step(store)
+
+    assert service.adapter.loads == []
+    assert service.job(job_id)['state'] == 'running'
+
+
+def test_abandon_waits_for_a_link_in_progress(service: Service, owned_threads: ThreadOwner) -> None:
+    """Abandonment that arrives during the link returns only after it, so nothing publishes afterwards (DESIGN 5.9)."""
+    job_id = service.submit(service.media())
+    real_publish = testee.publish_srt
+    returned = threading.Event()
+    waited: list[bool] = []
+
+    def publish_with_abandonment_during_the_link(paths: object, text: str, checkpoint: Callable[[], None],
+                                                 before_link: Callable[[], None]) -> bool:
+        def lock_then_abandon() -> None:
+            before_link()  # the worker now holds the publication lock
+            owned_threads.start(lambda: (service.worker.abandon(), returned.set()))
+            # Only time shows that abandon is blocked; it returns within milliseconds when it is not.
+            waited.append(not returned.wait(0.2))
+
+        return real_publish(paths, text, checkpoint, lock_then_abandon)  # type: ignore[arg-type]
+
+    with patch.object(testee, 'publish_srt', publish_with_abandonment_during_the_link):
+        service.worker.step(service.store)
+
+    assert waited == [True]
+    assert returned.wait(WAIT_SECONDS)
+    # The link finished before abandonment took effect, so the SRT is whole. The worker may record the job
+    # `done` before the waiting abandonment sets its flag, or leave it `running` for recovery to end `existing`.
+    assert (service.root / 'video.srt').read_text() == SRT_TEXT
+    job = service.job(job_id)
+    assert job['state'] in ('running', 'done') and job['failure'] is None
+
+
+def test_abandon_gives_up_waiting_for_a_stalled_link(
+    service: Service, monkeypatch: pytest.MonkeyPatch, owned_threads: ThreadOwner,
+) -> None:
+    """A link stalled on the share delays abandonment by a bounded wait only."""
+    monkeypatch.setattr(testee, 'ABANDON_WAIT_SECONDS', 0.01)
+    lock = service.worker._publication_lock
+    returned = threading.Event()
+    assert lock.acquire()  # stands in for a link that never returns
+    try:
+        owned_threads.start(lambda: (service.worker.abandon(), returned.set()))
+        assert returned.wait(WAIT_SECONDS)
+    finally:
+        lock.release()
+    with pytest.raises(testee._Abandoned):
+        service.worker._lock_for_link()
+    assert not lock.locked()
